@@ -98,7 +98,7 @@ func seedUnanimousGate(t *testing.T) unanimousGateFixture {
 	}
 	instID := seedInstance(t, store, tmpl)
 	return unanimousGateFixture{
-		Store: store, Svc: workflow.New(store),
+		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID, StepA: stepA, GateStep: gateStep, StepC: stepC,
 		InstanceID: instID,
 	}
@@ -223,7 +223,7 @@ func TestAutoAdvance_WrongBranch_RejectionTransitionFirst(t *testing.T) {
 			},
 		}
 		instID := seedInstance(t, store, tmpl)
-		svc := workflow.New(store)
+		svc := workflow.New(store, nil)
 
 		item := createItem(t, store, instID, gateStep)
 		updated, err := svc.ApproveItem(ctx, workflow.ApproveRequest{
@@ -273,7 +273,7 @@ func TestAutoAdvance_WrongBranch_RejectionTransitionFirst(t *testing.T) {
 			},
 		}
 		instID := seedInstance(t, store, tmpl)
-		svc := workflow.New(store)
+		svc := workflow.New(store, nil)
 
 		item := createItem(t, store, instID, gateStep)
 		updated, err := svc.ApproveItem(ctx, workflow.ApproveRequest{

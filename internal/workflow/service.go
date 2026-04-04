@@ -18,12 +18,14 @@ import (
 
 // Service executes workflow operations against a domain.Store.
 type Service struct {
-	store domain.Store
+	store    domain.Store
+	identity domain.IdentityProvider
 }
 
-// New creates a new Service backed by the given store.
-func New(store domain.Store) *Service {
-	return &Service{store: store}
+// New creates a new Service. identity may be nil — if so, role checks are
+// skipped (backwards-compatible, open-access behaviour).
+func New(store domain.Store, identity domain.IdentityProvider) *Service {
+	return &Service{store: store, identity: identity}
 }
 
 // TransitionRequest holds all parameters for a work item transition.
@@ -97,6 +99,14 @@ func (s *Service) TransitionItem(ctx context.Context, req TransitionRequest) (*d
 	for i := range tmpl.Steps {
 		if tmpl.Steps[i].ID == w.CurrentStepID && tmpl.Steps[i].Type == domain.StepTypeGate {
 			return nil, domain.ErrGateRequiresApproval
+		}
+	}
+
+	// Role check: if the transition requires a role and identity is configured,
+	// verify the actor holds that role.
+	if tr.RequiredRoleID != "" && s.identity != nil {
+		if err := s.checkActorHasRole(ctx, req.ActorAgentID, tr.RequiredRoleID); err != nil {
+			return nil, err
 		}
 	}
 
@@ -180,6 +190,13 @@ func (s *Service) ApproveItem(ctx context.Context, req ApproveRequest) (*domain.
 	}
 	if currentStep == nil || currentStep.Type != domain.StepTypeGate {
 		return nil, domain.ErrNotAtGateStep
+	}
+
+	// Approver role check.
+	if currentStep.Approval != nil && currentStep.Approval.ApproverRoleID != "" && s.identity != nil {
+		if err := s.checkActorHasRole(ctx, req.AgentID, currentStep.Approval.ApproverRoleID); err != nil {
+			return nil, err
+		}
 	}
 
 	a := &domain.Approval{
@@ -319,6 +336,13 @@ func (s *Service) RejectItem(ctx context.Context, req RejectRequest) (*domain.Wo
 		return nil, domain.ErrNotAtGateStep
 	}
 
+	// Approver role check.
+	if currentStep.Approval != nil && currentStep.Approval.ApproverRoleID != "" && s.identity != nil {
+		if err := s.checkActorHasRole(ctx, req.AgentID, currentStep.Approval.ApproverRoleID); err != nil {
+			return nil, err
+		}
+	}
+
 	a := &domain.Approval{
 		ID:         newID("apr"),
 		WorkItemID: w.ID,
@@ -378,4 +402,19 @@ func (s *Service) loadCurrentStep(ctx context.Context, w *domain.WorkItem) (*dom
 		}
 	}
 	return nil, tmpl, nil
+}
+
+// checkActorHasRole returns nil if agentID has roleID, domain.ErrPermissionDenied
+// if they do not, or a wrapped error if Hive is unreachable.
+func (s *Service) checkActorHasRole(ctx context.Context, agentID, roleID string) error {
+	roles, err := s.identity.GetAgentRoles(ctx, agentID)
+	if err != nil {
+		return fmt.Errorf("resolve actor roles: %w", err)
+	}
+	for _, r := range roles {
+		if r.ID == roleID {
+			return nil
+		}
+	}
+	return domain.ErrPermissionDenied
 }

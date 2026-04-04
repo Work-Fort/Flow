@@ -68,7 +68,7 @@ func seedSDLC(t *testing.T) sdlcFixture {
 	}
 	instID := seedInstance(t, store, tmpl)
 	return sdlcFixture{
-		Store: store, Svc: workflow.New(store),
+		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID,
 		Backlog: backlog, Planning: planning, Review: review, Done: done,
 		Triage: triage, Submit: submit, ReviewDone: reviewDone, ReviewPlan: reviewPlan,

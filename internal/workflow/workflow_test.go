@@ -199,7 +199,7 @@ func TestTransition_GuardWithActorRole(t *testing.T) {
 		},
 	}
 	instID := seedInstance(t, store, tmpl)
-	svc := workflow.New(store)
+	svc := workflow.New(store, nil)
 
 	// Matching role — should advance.
 	item1 := createItem(t, store, instID, stepA)
@@ -253,7 +253,7 @@ func TestTransition_GuardWithFields(t *testing.T) {
 		},
 	}
 	instID := seedInstance(t, store, tmpl)
-	svc := workflow.New(store)
+	svc := workflow.New(store, nil)
 
 	// Item with tests_passing=true — should advance.
 	item1 := createItem(t, store, instID, stepA)
@@ -315,7 +315,7 @@ func TestTransition_GuardWithApprovalCount(t *testing.T) {
 		},
 	}
 	instID := seedInstance(t, store, tmpl)
-	svc := workflow.New(store)
+	svc := workflow.New(store, nil)
 
 	// No approvals — guard must deny.
 	item1 := createItem(t, store, instID, stepA)
@@ -808,7 +808,7 @@ func TestReject_WithoutRejectionStep_RecordsAndStays(t *testing.T) {
 		},
 	}
 	instID := seedInstance(t, store, tmpl)
-	svc := workflow.New(store)
+	svc := workflow.New(store, nil)
 
 	item := createItem(t, store, instID, gateStep)
 
@@ -1294,7 +1294,7 @@ func TestApprove_MultipleForwardTransitions_GuardEvaluated(t *testing.T) {
 		},
 	}
 	instID := seedInstance(t, store, tmpl)
-	svc := workflow.New(store)
+	svc := workflow.New(store, nil)
 
 	// Item with priority=normal — must route to stepNorm, not stepHigh.
 	item := createItem(t, store, instID, gateStep)

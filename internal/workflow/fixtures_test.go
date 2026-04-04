@@ -30,7 +30,7 @@ func openStore(t *testing.T) domain.Store {
 func newSvc(t *testing.T) (*workflow.Service, domain.Store) {
 	t.Helper()
 	store := openStore(t)
-	return workflow.New(store), store
+	return workflow.New(store, nil), store
 }
 
 // tid generates a short prefixed test ID.
@@ -118,7 +118,7 @@ func seedTwoStep(t *testing.T) twoStepFixture {
 	}
 	instID := seedInstance(t, store, tmpl)
 	return twoStepFixture{
-		Store: store, Svc: workflow.New(store),
+		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID, StepA: stepA, StepB: stepB,
 		TransAtoB: transAB, InstanceID: instID,
 	}
@@ -154,7 +154,7 @@ func seedGuarded(t *testing.T) guardedFixture {
 	}
 	instID := seedInstance(t, store, tmpl)
 	return guardedFixture{twoStepFixture{
-		Store: store, Svc: workflow.New(store),
+		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID, StepA: stepA, StepB: stepB,
 		TransAtoB: transAB, InstanceID: instID,
 	}}
@@ -213,7 +213,7 @@ func seedGate(t *testing.T) gateFixture {
 	}
 	instID := seedInstance(t, store, tmpl)
 	return gateFixture{
-		Store: store, Svc: workflow.New(store),
+		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID, StepA: stepA, GateStep: gateStep, StepC: stepC,
 		TransAtoGate: transAG, TransGateToC: transGC, TransGateToA: transGA,
 		InstanceID: instID,
@@ -259,7 +259,7 @@ func seedCycle(t *testing.T) cycleFixture {
 	}
 	instID := seedInstance(t, store, tmpl)
 	return cycleFixture{
-		Store: store, Svc: workflow.New(store),
+		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID,
 		StepA: stepA, StepB: stepB, StepC: stepC,
 		TransAtoB: transAB, TransBtoC: transBC, TransBtoA: transBA,
@@ -305,7 +305,7 @@ func seedMultiTrans(t *testing.T) multiTransFixture {
 	}
 	instID := seedInstance(t, store, tmpl)
 	return multiTransFixture{
-		Store: store, Svc: workflow.New(store),
+		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID,
 		StepA: stepA, StepB: stepB, StepC: stepC,
 		TransAtoB: transAB, TransAtoC: transAC,

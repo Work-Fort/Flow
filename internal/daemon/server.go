@@ -17,6 +17,7 @@ import (
 	"github.com/Work-Fort/Passport/go/service-auth/jwt"
 
 	"github.com/Work-Fort/Flow/internal/domain"
+	"github.com/Work-Fort/Flow/internal/workflow"
 )
 
 // ServerConfig holds configuration for the HTTP server.
@@ -37,11 +38,12 @@ func NewServer(cfg ServerConfig) *http.Server {
 	api := humago.New(mux, config)
 
 	// REST API routes via Huma
+	svc := workflow.New(cfg.Store, nil)
 	registerTemplateRoutes(api, cfg.Store)
 	registerInstanceRoutes(api, cfg.Store)
 	registerWorkItemRoutes(api, cfg.Store)
-	registerTransitionRoutes(api, cfg.Store)
-	registerApprovalRoutes(api, cfg.Store)
+	registerTransitionRoutes(api, svc)
+	registerApprovalRoutes(api, cfg.Store, svc)
 
 	// Health — raw handler (conditional status codes 200/218/503)
 	mux.HandleFunc("GET /v1/health", HandleHealth(cfg.Health))
@@ -50,6 +52,7 @@ func NewServer(cfg ServerConfig) *http.Server {
 	// MCP server — raw handler (JSON-RPC 2.0, not REST)
 	mcpHandler := NewMCPHandler(MCPDeps{
 		Store: cfg.Store,
+		Svc:   svc,
 	})
 	mux.Handle("/mcp", mcpHandler)
 
