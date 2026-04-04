@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	daemonCmd "github.com/Work-Fort/Flow/cmd/daemon"
+	mcpBridgeCmd "github.com/Work-Fort/Flow/cmd/mcpbridge"
 	"github.com/Work-Fort/Flow/internal/config"
 )
 
@@ -94,4 +96,7 @@ func init() {
 	}
 	rootCmd.SilenceUsage = true
 	rootCmd.SilenceErrors = true
+
+	rootCmd.AddCommand(daemonCmd.NewCmd())
+	rootCmd.AddCommand(mcpBridgeCmd.NewCmd())
 }
