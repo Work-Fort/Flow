@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 // Package domain defines core types and port interfaces for Flow.
-// This package has zero infrastructure dependencies.
+// This package has no infrastructure dependencies.
 package domain
 
 import (

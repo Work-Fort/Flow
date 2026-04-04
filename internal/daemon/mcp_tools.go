@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/charmbracelet/log"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
@@ -285,7 +286,9 @@ func registerTools(s *server.MCPServer, deps MCPDeps) {
 				TriggeredBy:  actorAgentID,
 				Reason:       reason,
 			}
-			deps.Store.RecordTransition(ctx, h) //nolint:errcheck
+			if err := deps.Store.RecordTransition(ctx, h); err != nil {
+				log.Warn("record transition history", "err", err)
+			}
 
 			updated, err := deps.Store.GetWorkItem(ctx, w.ID)
 			if err != nil {
@@ -361,7 +364,9 @@ func registerTools(s *server.MCPServer, deps MCPDeps) {
 								TransitionID: tr.ID, TriggeredBy: agentID,
 								Reason: "auto-advance on approval threshold",
 							}
-							deps.Store.RecordTransition(ctx, h) //nolint:errcheck
+							if err := deps.Store.RecordTransition(ctx, h); err != nil {
+								log.Warn("record auto-advance transition history", "err", err)
+							}
 							break
 						}
 					}
@@ -433,7 +438,9 @@ func registerTools(s *server.MCPServer, deps MCPDeps) {
 							TransitionID: tr.ID, TriggeredBy: agentID,
 							Reason: "rejected: " + comment,
 						}
-						deps.Store.RecordTransition(ctx, h) //nolint:errcheck
+						if err := deps.Store.RecordTransition(ctx, h); err != nil {
+							log.Warn("record rejection transition history", "err", err)
+						}
 						break
 					}
 				}

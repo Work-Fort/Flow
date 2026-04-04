@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/charmbracelet/log"
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/Work-Fort/Flow/internal/domain"
@@ -411,8 +412,8 @@ func registerWorkItemRoutes(api huma.API, store domain.Store) {
 		if input.Body.Description != "" {
 			existing.Description = input.Body.Description
 		}
-		if input.Body.AssignedAgentID != "" {
-			existing.AssignedAgentID = input.Body.AssignedAgentID
+		if input.Body.AssignedAgentID != nil {
+			existing.AssignedAgentID = *input.Body.AssignedAgentID
 		}
 		if input.Body.Fields != nil {
 			existing.Fields = input.Body.Fields
@@ -613,7 +614,9 @@ func registerApprovalRoutes(api huma.API, store domain.Store) {
 							TriggeredBy:  input.Body.AgentID,
 							Reason:       "auto-advance on approval threshold",
 						}
-						store.RecordTransition(ctx, h) //nolint:errcheck
+						if err := store.RecordTransition(ctx, h); err != nil {
+							log.Warn("record auto-advance transition history", "err", err)
+						}
 						break
 					}
 				}
@@ -693,7 +696,9 @@ func registerApprovalRoutes(api huma.API, store domain.Store) {
 						TriggeredBy:  input.Body.AgentID,
 						Reason:       "rejected: " + input.Body.Comment,
 					}
-					store.RecordTransition(ctx, h) //nolint:errcheck
+					if err := store.RecordTransition(ctx, h); err != nil {
+						log.Warn("record rejection transition history", "err", err)
+					}
 					break
 				}
 			}
