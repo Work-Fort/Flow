@@ -17,6 +17,7 @@ import (
 	"github.com/Work-Fort/Passport/go/service-auth/jwt"
 
 	"github.com/Work-Fort/Flow/internal/domain"
+	hiveinfra "github.com/Work-Fort/Flow/internal/infra/hive"
 	"github.com/Work-Fort/Flow/internal/workflow"
 )
 
@@ -25,6 +26,8 @@ type ServerConfig struct {
 	Bind        string
 	Port        int
 	PassportURL string
+	HiveURL     string
+	HiveToken   string
 	Health      *HealthService
 	Store       domain.Store
 }
@@ -37,8 +40,11 @@ func NewServer(cfg ServerConfig) *http.Server {
 	config := huma.DefaultConfig("Flow API", "1.0.0")
 	api := humago.New(mux, config)
 
-	// REST API routes via Huma
-	svc := workflow.New(cfg.Store, nil)
+	var identityProvider domain.IdentityProvider
+	if cfg.HiveURL != "" {
+		identityProvider = hiveinfra.New(cfg.HiveURL, cfg.HiveToken)
+	}
+	svc := workflow.New(cfg.Store, identityProvider)
 	registerTemplateRoutes(api, cfg.Store)
 	registerInstanceRoutes(api, cfg.Store)
 	registerWorkItemRoutes(api, cfg.Store)

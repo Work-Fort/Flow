@@ -81,6 +81,8 @@ func InitViper() {
 	viper.SetDefault("db", "")
 	viper.SetDefault("passport-url", "")
 	viper.SetDefault("passport-token", "")
+	viper.SetDefault("hive-url", "")
+	viper.SetDefault("hive-token", "")
 
 	viper.SetConfigName(ConfigFileName)
 	viper.SetConfigType(ConfigType)
