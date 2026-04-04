@@ -46,3 +46,19 @@ type Store interface {
 	Ping(ctx context.Context) error
 	io.Closer
 }
+
+// IdentityProvider resolves agents and roles from an external identity service.
+// It is an optional dependency — if nil, role checks are skipped.
+type IdentityProvider interface {
+	// ResolveAgent returns the agent with their current role assignments.
+	ResolveAgent(ctx context.Context, agentID string) (*IdentityAgent, error)
+
+	// ResolveRole returns the role record for the given role ID.
+	ResolveRole(ctx context.Context, roleID string) (*IdentityRole, error)
+
+	// GetTeamMembers returns all agents belonging to the given team.
+	GetTeamMembers(ctx context.Context, teamID string) ([]IdentityAgent, error)
+
+	// GetAgentRoles returns the roles assigned to the given agent.
+	GetAgentRoles(ctx context.Context, agentID string) ([]IdentityRole, error)
+}

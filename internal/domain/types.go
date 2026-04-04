@@ -157,3 +157,18 @@ type Approval struct {
 	Comment    string           `json:"comment,omitempty"`
 	Timestamp  time.Time        `json:"timestamp"`
 }
+
+// IdentityAgent is Flow's view of a Hive agent — the fields Flow needs.
+type IdentityAgent struct {
+	ID     string
+	Name   string
+	TeamID string
+	Roles  []IdentityRole
+}
+
+// IdentityRole is Flow's view of a Hive role.
+type IdentityRole struct {
+	ID       string
+	Name     string
+	ParentID string
+}
