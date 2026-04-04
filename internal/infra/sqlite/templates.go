@@ -13,6 +13,21 @@ import (
 )
 
 func (s *Store) CreateTemplate(ctx context.Context, t *domain.WorkflowTemplate) error {
+	// Validate that all RejectionStepIDs in gate steps refer to steps in this template.
+	stepIDs := make(map[string]struct{}, len(t.Steps))
+	for i := range t.Steps {
+		stepIDs[t.Steps[i].ID] = struct{}{}
+	}
+	for i := range t.Steps {
+		step := &t.Steps[i]
+		if step.Approval != nil && step.Approval.RejectionStepID != "" {
+			if _, ok := stepIDs[step.Approval.RejectionStepID]; !ok {
+				return fmt.Errorf("%w: rejection_step_id %q on step %q is not a step in this template",
+					domain.ErrNotFound, step.Approval.RejectionStepID, step.Key)
+			}
+		}
+	}
+
 	now := time.Now().UTC()
 	if t.CreatedAt.IsZero() {
 		t.CreatedAt = now

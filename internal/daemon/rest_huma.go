@@ -6,10 +6,10 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/charmbracelet/log"
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/Work-Fort/Flow/internal/domain"
+	"github.com/Work-Fort/Flow/internal/workflow"
 )
 
 // mapDomainErr converts a domain error to a Huma error with the appropriate
@@ -32,6 +32,8 @@ func mapDomainErr(err error) error {
 	case errors.Is(err, domain.ErrInvalidTransition):
 		return huma.NewError(http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, domain.ErrNotAtGateStep):
+		return huma.NewError(http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, domain.ErrGateRequiresApproval):
 		return huma.NewError(http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, domain.ErrPermissionDenied):
 		return huma.NewError(http.StatusForbidden, err.Error())
@@ -449,7 +451,7 @@ func registerWorkItemRoutes(api huma.API, store domain.Store) {
 
 // --- transition routes ---
 
-func registerTransitionRoutes(api huma.API, store domain.Store) {
+func registerTransitionRoutes(api huma.API, svc *workflow.Service) {
 	huma.Register(api, huma.Operation{
 		OperationID: "transition-work-item",
 		Method:      http.MethodPost,
@@ -457,74 +459,13 @@ func registerTransitionRoutes(api huma.API, store domain.Store) {
 		Summary:     "Transition a work item to a new step",
 		Tags:        []string{"Transitions"},
 	}, func(ctx context.Context, input *TransitionWorkItemInput) (*WorkItemOutput, error) {
-		w, err := store.GetWorkItem(ctx, input.ID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		// Load template to find the transition
-		inst, err := store.GetInstance(ctx, w.InstanceID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-		tmpl, err := store.GetTemplate(ctx, inst.TemplateID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		var tr *domain.Transition
-		for i := range tmpl.Transitions {
-			if tmpl.Transitions[i].ID == input.Body.TransitionID {
-				tr = &tmpl.Transitions[i]
-				break
-			}
-		}
-		if tr == nil {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, domain.ErrInvalidTransition.Error())
-		}
-
-		// Verify current step matches from_step_id
-		if w.CurrentStepID != tr.FromStepID {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, domain.ErrInvalidTransition.Error())
-		}
-
-		// Build guard context and evaluate
-		guardCtx := domain.GuardContext{
-			Item: domain.GuardItem{
-				Title:    w.Title,
-				Priority: string(w.Priority),
-				Step:     w.CurrentStepID,
-			},
-			Actor: domain.GuardActor{
-				RoleID:  input.Body.ActorRoleID,
-				AgentID: input.Body.ActorAgentID,
-			},
-		}
-		if err := domain.EvaluateGuard(tr.Guard, guardCtx); err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		// Update work item
-		w.CurrentStepID = tr.ToStepID
-		if err := store.UpdateWorkItem(ctx, w); err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		// Record history
-		h := &domain.TransitionHistory{
-			ID:           NewID("th"),
-			WorkItemID:   w.ID,
-			FromStepID:   tr.FromStepID,
-			ToStepID:     tr.ToStepID,
-			TransitionID: tr.ID,
-			TriggeredBy:  input.Body.ActorAgentID,
+		updated, err := svc.TransitionItem(ctx, workflow.TransitionRequest{
+			WorkItemID:   input.ID,
+			TransitionID: input.Body.TransitionID,
+			ActorAgentID: input.Body.ActorAgentID,
+			ActorRoleID:  input.Body.ActorRoleID,
 			Reason:       input.Body.Reason,
-		}
-		if err := store.RecordTransition(ctx, h); err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		updated, err := store.GetWorkItem(ctx, w.ID)
+		})
 		if err != nil {
 			return nil, mapDomainErr(err)
 		}
@@ -534,7 +475,7 @@ func registerTransitionRoutes(api huma.API, store domain.Store) {
 
 // --- approval routes ---
 
-func registerApprovalRoutes(api huma.API, store domain.Store) {
+func registerApprovalRoutes(api huma.API, store domain.Store, svc *workflow.Service) {
 	huma.Register(api, huma.Operation{
 		OperationID: "approve-work-item",
 		Method:      http.MethodPost,
@@ -542,88 +483,11 @@ func registerApprovalRoutes(api huma.API, store domain.Store) {
 		Summary:     "Approve a work item at a gate step",
 		Tags:        []string{"Approvals"},
 	}, func(ctx context.Context, input *ApproveWorkItemInput) (*WorkItemOutput, error) {
-		w, err := store.GetWorkItem(ctx, input.ID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		// Verify gate step
-		inst, err := store.GetInstance(ctx, w.InstanceID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-		tmpl, err := store.GetTemplate(ctx, inst.TemplateID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		var currentStep *domain.Step
-		for i := range tmpl.Steps {
-			if tmpl.Steps[i].ID == w.CurrentStepID {
-				currentStep = &tmpl.Steps[i]
-				break
-			}
-		}
-		if currentStep == nil || currentStep.Type != domain.StepTypeGate {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, domain.ErrNotAtGateStep.Error())
-		}
-
-		// Record approval
-		a := &domain.Approval{
-			ID:         NewID("apr"),
-			WorkItemID: w.ID,
-			StepID:     w.CurrentStepID,
+		updated, err := svc.ApproveItem(ctx, workflow.ApproveRequest{
+			WorkItemID: input.ID,
 			AgentID:    input.Body.AgentID,
-			Decision:   domain.ApprovalDecisionApproved,
 			Comment:    input.Body.Comment,
-		}
-		if err := store.RecordApproval(ctx, a); err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		// Auto-advance logic for mode=any
-		if currentStep.Approval != nil {
-			approvals, err := store.ListApprovals(ctx, w.ID, w.CurrentStepID)
-			if err != nil {
-				return nil, mapDomainErr(err)
-			}
-			approvedCount := 0
-			for _, ap := range approvals {
-				if ap.Decision == domain.ApprovalDecisionApproved {
-					approvedCount++
-				}
-			}
-
-			if currentStep.Approval.Mode == domain.ApprovalModeAny &&
-				approvedCount >= currentStep.Approval.RequiredApprovers {
-				// Find outgoing transition (not going to rejection step)
-				for i := range tmpl.Transitions {
-					tr := &tmpl.Transitions[i]
-					if tr.FromStepID == w.CurrentStepID &&
-						tr.ToStepID != currentStep.Approval.RejectionStepID {
-						w.CurrentStepID = tr.ToStepID
-						if err := store.UpdateWorkItem(ctx, w); err != nil {
-							return nil, mapDomainErr(err)
-						}
-						h := &domain.TransitionHistory{
-							ID:           NewID("th"),
-							WorkItemID:   w.ID,
-							FromStepID:   tr.FromStepID,
-							ToStepID:     tr.ToStepID,
-							TransitionID: tr.ID,
-							TriggeredBy:  input.Body.AgentID,
-							Reason:       "auto-advance on approval threshold",
-						}
-						if err := store.RecordTransition(ctx, h); err != nil {
-							log.Warn("record auto-advance transition history", "err", err)
-						}
-						break
-					}
-				}
-			}
-		}
-
-		updated, err := store.GetWorkItem(ctx, w.ID)
+		})
 		if err != nil {
 			return nil, mapDomainErr(err)
 		}
@@ -637,74 +501,11 @@ func registerApprovalRoutes(api huma.API, store domain.Store) {
 		Summary:     "Reject a work item at a gate step",
 		Tags:        []string{"Approvals"},
 	}, func(ctx context.Context, input *RejectWorkItemInput) (*WorkItemOutput, error) {
-		w, err := store.GetWorkItem(ctx, input.ID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		// Verify gate step
-		inst, err := store.GetInstance(ctx, w.InstanceID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-		tmpl, err := store.GetTemplate(ctx, inst.TemplateID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		var currentStep *domain.Step
-		for i := range tmpl.Steps {
-			if tmpl.Steps[i].ID == w.CurrentStepID {
-				currentStep = &tmpl.Steps[i]
-				break
-			}
-		}
-		if currentStep == nil || currentStep.Type != domain.StepTypeGate {
-			return nil, huma.NewError(http.StatusUnprocessableEntity, domain.ErrNotAtGateStep.Error())
-		}
-
-		// Record rejection
-		a := &domain.Approval{
-			ID:         NewID("apr"),
-			WorkItemID: w.ID,
-			StepID:     w.CurrentStepID,
+		updated, err := svc.RejectItem(ctx, workflow.RejectRequest{
+			WorkItemID: input.ID,
 			AgentID:    input.Body.AgentID,
-			Decision:   domain.ApprovalDecisionRejected,
 			Comment:    input.Body.Comment,
-		}
-		if err := store.RecordApproval(ctx, a); err != nil {
-			return nil, mapDomainErr(err)
-		}
-
-		// Advance to rejection step if configured
-		if currentStep.Approval != nil && currentStep.Approval.RejectionStepID != "" {
-			fromStepID := w.CurrentStepID
-			w.CurrentStepID = currentStep.Approval.RejectionStepID
-			if err := store.UpdateWorkItem(ctx, w); err != nil {
-				return nil, mapDomainErr(err)
-			}
-			// Find rejection transition
-			for i := range tmpl.Transitions {
-				tr := &tmpl.Transitions[i]
-				if tr.FromStepID == fromStepID && tr.ToStepID == currentStep.Approval.RejectionStepID {
-					h := &domain.TransitionHistory{
-						ID:           NewID("th"),
-						WorkItemID:   w.ID,
-						FromStepID:   fromStepID,
-						ToStepID:     currentStep.Approval.RejectionStepID,
-						TransitionID: tr.ID,
-						TriggeredBy:  input.Body.AgentID,
-						Reason:       "rejected: " + input.Body.Comment,
-					}
-					if err := store.RecordTransition(ctx, h); err != nil {
-						log.Warn("record rejection transition history", "err", err)
-					}
-					break
-				}
-			}
-		}
-
-		updated, err := store.GetWorkItem(ctx, w.ID)
+		})
 		if err != nil {
 			return nil, mapDomainErr(err)
 		}

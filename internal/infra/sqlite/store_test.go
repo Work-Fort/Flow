@@ -172,6 +172,129 @@ func TestWorkItemTransitionFlow(t *testing.T) {
 	}
 }
 
+func TestListWorkItems_Filters(t *testing.T) {
+	s, err := sqlite.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+
+	// Build a template with two task steps so items can be placed on different steps.
+	templateID := newID("tpl")
+	stepAlpha := newID("stp")
+	stepBeta := newID("stp")
+	instanceID := newID("ins")
+
+	tmpl := &domain.WorkflowTemplate{
+		ID: templateID, Name: "Filter Test", Version: 1,
+		Steps: []domain.Step{
+			{ID: stepAlpha, TemplateID: templateID, Key: "alpha", Name: "Alpha", Type: domain.StepTypeTask, Position: 0},
+			{ID: stepBeta, TemplateID: templateID, Key: "beta", Name: "Beta", Type: domain.StepTypeTask, Position: 1},
+		},
+	}
+	if err := s.CreateTemplate(ctx, tmpl); err != nil {
+		t.Fatalf("CreateTemplate: %v", err)
+	}
+	inst := &domain.WorkflowInstance{
+		ID: instanceID, TemplateID: templateID, TemplateVersion: 1,
+		TeamID: "team1", Name: "Filter Instance", Status: domain.InstanceStatusActive,
+	}
+	if err := s.CreateInstance(ctx, inst); err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	// Create 3 work items at different steps with different priorities/agents.
+	wi1 := &domain.WorkItem{
+		ID: newID("wi"), InstanceID: instanceID, Title: "Item 1",
+		CurrentStepID: stepAlpha, AssignedAgentID: "agent-x", Priority: domain.PriorityHigh,
+	}
+	wi2 := &domain.WorkItem{
+		ID: newID("wi"), InstanceID: instanceID, Title: "Item 2",
+		CurrentStepID: stepBeta, AssignedAgentID: "agent-y", Priority: domain.PriorityNormal,
+	}
+	wi3 := &domain.WorkItem{
+		ID: newID("wi"), InstanceID: instanceID, Title: "Item 3",
+		CurrentStepID: stepAlpha, AssignedAgentID: "agent-x", Priority: domain.PriorityCritical,
+	}
+	for _, wi := range []*domain.WorkItem{wi1, wi2, wi3} {
+		if err := s.CreateWorkItem(ctx, wi); err != nil {
+			t.Fatalf("CreateWorkItem %q: %v", wi.Title, err)
+		}
+	}
+
+	t.Run("no filters returns all", func(t *testing.T) {
+		items, err := s.ListWorkItems(ctx, instanceID, "", "", "")
+		if err != nil {
+			t.Fatalf("ListWorkItems: %v", err)
+		}
+		if len(items) != 3 {
+			t.Errorf("want 3 items, got %d", len(items))
+		}
+	})
+
+	t.Run("filter by stepID", func(t *testing.T) {
+		items, err := s.ListWorkItems(ctx, instanceID, stepAlpha, "", "")
+		if err != nil {
+			t.Fatalf("ListWorkItems: %v", err)
+		}
+		if len(items) != 2 {
+			t.Errorf("want 2 items at stepAlpha, got %d", len(items))
+		}
+		for _, item := range items {
+			if item.CurrentStepID != stepAlpha {
+				t.Errorf("unexpected step: got %q, want %q", item.CurrentStepID, stepAlpha)
+			}
+		}
+	})
+
+	t.Run("filter by agentID", func(t *testing.T) {
+		items, err := s.ListWorkItems(ctx, instanceID, "", "agent-y", "")
+		if err != nil {
+			t.Fatalf("ListWorkItems: %v", err)
+		}
+		if len(items) != 1 {
+			t.Errorf("want 1 item for agent-y, got %d", len(items))
+		}
+		if len(items) > 0 && items[0].AssignedAgentID != "agent-y" {
+			t.Errorf("AssignedAgentID: got %q, want agent-y", items[0].AssignedAgentID)
+		}
+	})
+
+	t.Run("filter by priority", func(t *testing.T) {
+		items, err := s.ListWorkItems(ctx, instanceID, "", "", domain.PriorityHigh)
+		if err != nil {
+			t.Fatalf("ListWorkItems: %v", err)
+		}
+		if len(items) != 1 {
+			t.Errorf("want 1 high-priority item, got %d", len(items))
+		}
+		if len(items) > 0 && items[0].Priority != domain.PriorityHigh {
+			t.Errorf("Priority: got %q, want high", items[0].Priority)
+		}
+	})
+
+	t.Run("combined filters narrow correctly", func(t *testing.T) {
+		// agent-x at stepAlpha: matches wi1 and wi3 (not wi2 which is at stepBeta)
+		items, err := s.ListWorkItems(ctx, instanceID, stepAlpha, "agent-x", "")
+		if err != nil {
+			t.Fatalf("ListWorkItems: %v", err)
+		}
+		if len(items) != 2 {
+			t.Errorf("want 2 items for agent-x at stepAlpha, got %d", len(items))
+		}
+		for _, item := range items {
+			if item.CurrentStepID != stepAlpha {
+				t.Errorf("step filter violated: got %q", item.CurrentStepID)
+			}
+			if item.AssignedAgentID != "agent-x" {
+				t.Errorf("agent filter violated: got %q", item.AssignedAgentID)
+			}
+		}
+	})
+}
+
 func TestApprovalFlow(t *testing.T) {
 	s, err := sqlite.Open("")
 	if err != nil {
