@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://workfort.dev/schemas/flow/workflow/v0.1.0",
+  "title": "WorkFort Flow Workflow Template",
+  "description": "Draft interchange format for portable workflow templates. Subject to change during implementation.",
+  "type": "object",
+  "required": ["schema_version", "name", "version", "steps", "transitions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "0.1.0",
+      "description": "Schema version for forward compatibility"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Human-readable template name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Purpose and scope of this workflow"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Template version (semver)"
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" },
+      "description": "Nodes in the workflow graph"
+    },
+    "transitions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/transition" },
+      "description": "Edges in the workflow graph (may form cycles)"
+    },
+    "role_mappings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/role_mapping" },
+      "description": "Role-to-action permissions per step"
+    },
+    "integration_hooks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/integration_hook" },
+      "description": "Side effects fired on transitions"
+    },
+    "custom_fields": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/custom_field" },
+      "description": "Process-specific fields available on work items"
+    }
+  },
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["key", "name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Stable identifier for cross-referencing within the template"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["task", "gate"],
+          "description": "Step type: task (work step) or gate (approval checkpoint)"
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Ordering hint for display"
+        },
+        "approval": {
+          "$ref": "#/$defs/approval_config",
+          "description": "Required when type is gate"
+        }
+      }
+    },
+    "approval_config": {
+      "type": "object",
+      "required": ["mode", "approver_role"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["any", "unanimous"],
+          "description": "any: first approver wins. unanimous: all must approve"
+        },
+        "required_approvers": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Number of approvals needed (for 'any' mode)"
+        },
+        "approver_role": {
+          "type": "string",
+          "description": "Semantic role name that can approve (mapped to Hive role ID on import)"
+        },
+        "rejection_step": {
+          "type": "string",
+          "description": "Step key to send work items to on rejection"
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "required": ["key", "name", "from", "to"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Stable identifier for cross-referencing"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display label (e.g., 'Approve', 'Reject', 'Submit for Review')"
+        },
+        "from": {
+          "type": "string",
+          "description": "Source step key"
+        },
+        "to": {
+          "type": "string",
+          "description": "Destination step key"
+        },
+        "required_role": {
+          "type": "string",
+          "description": "Semantic role name required to trigger (mapped to Hive role ID on import)"
+        },
+        "guard": {
+          "type": "string",
+          "description": "CEL expression evaluated against work item context"
+        }
+      }
+    },
+    "role_mapping": {
+      "type": "object",
+      "required": ["role", "step", "actions"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "Semantic role name (mapped to Hive role ID on import)"
+        },
+        "step": {
+          "type": "string",
+          "description": "Step key"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["transition", "assign", "comment", "approve", "reject"]
+          },
+          "description": "Permitted actions at this step for this role"
+        }
+      }
+    },
+    "integration_hook": {
+      "type": "object",
+      "required": ["transition", "adapter", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "transition": {
+          "type": "string",
+          "description": "Transition key that triggers this hook"
+        },
+        "adapter": {
+          "type": "string",
+          "enum": ["git-forge", "chat", "identity"],
+          "description": "Adapter type (not a specific service — resolved on import)"
+        },
+        "action": {
+          "type": "string",
+          "description": "Adapter-specific action (e.g., 'create_issue', 'post_message', 'assign_agent')"
+        },
+        "config": {
+          "type": "object",
+          "description": "Action parameters (adapter-specific, no connection details)"
+        }
+      }
+    },
+    "custom_field": {
+      "type": "object",
+      "required": ["key", "name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Field key, available in CEL guards as item.fields.<key>"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["string", "number", "boolean", "enum"],
+          "description": "Field value type"
+        },
+        "enum_values": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Valid values when type is enum"
+        },
+        "required": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this field must be set on work items"
+        }
+      }
+    }
+  }
+}

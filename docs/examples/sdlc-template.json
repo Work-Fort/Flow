@@ -1,0 +1,307 @@
+{
+  "schema_version": "0.1.0",
+  "name": "Software Development Lifecycle",
+  "description": "Standard SDLC workflow covering the full software lifecycle from planning through maintenance. Based on the canonical 7-phase SDLC model (Planning, Requirements, Design, Implementation, Testing, Deployment, Maintenance).",
+  "version": "1.0.0",
+  "steps": [
+    {
+      "key": "planning",
+      "name": "Planning",
+      "type": "task",
+      "position": 0
+    },
+    {
+      "key": "requirements",
+      "name": "Requirements Analysis",
+      "type": "task",
+      "position": 1
+    },
+    {
+      "key": "requirements_review",
+      "name": "Requirements Review",
+      "type": "gate",
+      "position": 2,
+      "approval": {
+        "mode": "any",
+        "required_approvers": 1,
+        "approver_role": "Product Manager",
+        "rejection_step": "requirements"
+      }
+    },
+    {
+      "key": "design",
+      "name": "Design",
+      "type": "task",
+      "position": 3
+    },
+    {
+      "key": "design_review",
+      "name": "Design Review",
+      "type": "gate",
+      "position": 4,
+      "approval": {
+        "mode": "any",
+        "required_approvers": 1,
+        "approver_role": "Architect",
+        "rejection_step": "design"
+      }
+    },
+    {
+      "key": "implementation",
+      "name": "Implementation",
+      "type": "task",
+      "position": 5
+    },
+    {
+      "key": "code_review",
+      "name": "Code Review",
+      "type": "gate",
+      "position": 6,
+      "approval": {
+        "mode": "any",
+        "required_approvers": 1,
+        "approver_role": "Reviewer",
+        "rejection_step": "implementation"
+      }
+    },
+    {
+      "key": "testing",
+      "name": "Testing",
+      "type": "task",
+      "position": 7
+    },
+    {
+      "key": "deployment",
+      "name": "Deployment",
+      "type": "task",
+      "position": 8
+    },
+    {
+      "key": "maintenance",
+      "name": "Maintenance",
+      "type": "task",
+      "position": 9
+    }
+  ],
+  "transitions": [
+    {
+      "key": "begin_requirements",
+      "name": "Begin Requirements",
+      "from": "planning",
+      "to": "requirements",
+      "required_role": "Product Manager"
+    },
+    {
+      "key": "submit_requirements",
+      "name": "Submit Requirements",
+      "from": "requirements",
+      "to": "requirements_review",
+      "required_role": "Analyst"
+    },
+    {
+      "key": "approve_requirements",
+      "name": "Approve Requirements",
+      "from": "requirements_review",
+      "to": "design",
+      "required_role": "Product Manager"
+    },
+    {
+      "key": "reject_requirements",
+      "name": "Reject Requirements",
+      "from": "requirements_review",
+      "to": "requirements",
+      "required_role": "Product Manager"
+    },
+    {
+      "key": "submit_design",
+      "name": "Submit Design",
+      "from": "design",
+      "to": "design_review",
+      "required_role": "Architect"
+    },
+    {
+      "key": "approve_design",
+      "name": "Approve Design",
+      "from": "design_review",
+      "to": "implementation",
+      "required_role": "Architect"
+    },
+    {
+      "key": "reject_design",
+      "name": "Reject Design",
+      "from": "design_review",
+      "to": "design",
+      "required_role": "Architect"
+    },
+    {
+      "key": "submit_for_review",
+      "name": "Submit for Review",
+      "from": "implementation",
+      "to": "code_review",
+      "required_role": "Developer"
+    },
+    {
+      "key": "approve_code",
+      "name": "Approve",
+      "from": "code_review",
+      "to": "testing",
+      "required_role": "Reviewer"
+    },
+    {
+      "key": "request_changes",
+      "name": "Request Changes",
+      "from": "code_review",
+      "to": "implementation",
+      "required_role": "Reviewer"
+    },
+    {
+      "key": "pass_testing",
+      "name": "Pass Testing",
+      "from": "testing",
+      "to": "deployment",
+      "required_role": "QA Tester"
+    },
+    {
+      "key": "fail_testing",
+      "name": "Fail Testing",
+      "from": "testing",
+      "to": "implementation",
+      "required_role": "QA Tester"
+    },
+    {
+      "key": "deploy",
+      "name": "Deploy",
+      "from": "deployment",
+      "to": "maintenance",
+      "required_role": "Developer"
+    },
+    {
+      "key": "report_bug",
+      "name": "Report Bug",
+      "from": "maintenance",
+      "to": "planning",
+      "required_role": "Product Manager"
+    },
+    {
+      "key": "request_enhancement",
+      "name": "Request Enhancement",
+      "from": "maintenance",
+      "to": "planning",
+      "required_role": "Product Manager"
+    }
+  ],
+  "role_mappings": [
+    { "role": "Product Manager", "step": "planning", "actions": ["transition", "assign", "comment"] },
+    { "role": "Product Manager", "step": "requirements_review", "actions": ["approve", "reject"] },
+    { "role": "Product Manager", "step": "maintenance", "actions": ["transition", "comment"] },
+    { "role": "Analyst", "step": "requirements", "actions": ["transition", "comment"] },
+    { "role": "Architect", "step": "design", "actions": ["transition", "comment"] },
+    { "role": "Architect", "step": "design_review", "actions": ["approve", "reject", "comment"] },
+    { "role": "Developer", "step": "implementation", "actions": ["transition", "comment"] },
+    { "role": "Developer", "step": "deployment", "actions": ["transition", "comment"] },
+    { "role": "Reviewer", "step": "code_review", "actions": ["approve", "reject", "comment"] },
+    { "role": "QA Tester", "step": "testing", "actions": ["transition", "comment"] }
+  ],
+  "integration_hooks": [
+    {
+      "transition": "begin_requirements",
+      "adapter": "identity",
+      "action": "assign_agent",
+      "config": { "role": "Analyst" }
+    },
+    {
+      "transition": "submit_requirements",
+      "adapter": "chat",
+      "action": "post_message",
+      "config": { "template": "Requirements submitted for review: {{item.title}}" }
+    },
+    {
+      "transition": "approve_requirements",
+      "adapter": "identity",
+      "action": "assign_agent",
+      "config": { "role": "Architect" }
+    },
+    {
+      "transition": "approve_design",
+      "adapter": "git-forge",
+      "action": "create_issue",
+      "config": {}
+    },
+    {
+      "transition": "approve_design",
+      "adapter": "identity",
+      "action": "assign_agent",
+      "config": { "role": "Developer" }
+    },
+    {
+      "transition": "approve_design",
+      "adapter": "chat",
+      "action": "post_message",
+      "config": { "template": "Design approved, implementation can begin: {{item.title}}" }
+    },
+    {
+      "transition": "submit_for_review",
+      "adapter": "identity",
+      "action": "assign_agent",
+      "config": { "role": "Reviewer" }
+    },
+    {
+      "transition": "request_changes",
+      "adapter": "chat",
+      "action": "post_message",
+      "config": { "template": "Changes requested on {{item.title}}" }
+    },
+    {
+      "transition": "approve_code",
+      "adapter": "identity",
+      "action": "assign_agent",
+      "config": { "role": "QA Tester" }
+    },
+    {
+      "transition": "pass_testing",
+      "adapter": "chat",
+      "action": "post_message",
+      "config": { "template": "Testing passed for {{item.title}}, ready for deployment" }
+    },
+    {
+      "transition": "fail_testing",
+      "adapter": "chat",
+      "action": "post_message",
+      "config": { "template": "Testing failed for {{item.title}}" }
+    },
+    {
+      "transition": "deploy",
+      "adapter": "git-forge",
+      "action": "close_issue",
+      "config": { "resolution": "fixed" }
+    },
+    {
+      "transition": "deploy",
+      "adapter": "chat",
+      "action": "post_message",
+      "config": { "template": "{{item.title}} deployed to production" }
+    }
+  ],
+  "custom_fields": [
+    {
+      "key": "complexity",
+      "name": "Complexity",
+      "type": "enum",
+      "enum_values": ["trivial", "small", "medium", "large", "epic"],
+      "required": false
+    },
+    {
+      "key": "tests_passing",
+      "name": "Tests Passing",
+      "type": "boolean",
+      "required": false
+    },
+    {
+      "key": "category",
+      "name": "Category",
+      "type": "enum",
+      "enum_values": ["feature", "bug", "enhancement", "refactor", "documentation"],
+      "required": true
+    }
+  ]
+}
