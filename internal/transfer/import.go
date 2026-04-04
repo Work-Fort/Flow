@@ -81,6 +81,17 @@ func ImportTemplate(ctx context.Context, store domain.Store, path string, roles 
 
 // ImportTemplateFromFile converts a TemplateFile to domain entities and creates it in the store.
 func ImportTemplateFromFile(ctx context.Context, store domain.Store, tf *TemplateFile, roles RoleIndex) (*domain.WorkflowTemplate, error) {
+	// Reject duplicates by name before doing any work.
+	existing, err := store.ListTemplates(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list templates: %w", err)
+	}
+	for _, t := range existing {
+		if t.Name == tf.Name {
+			return nil, fmt.Errorf("template %q already exists", tf.Name)
+		}
+	}
+
 	// Generate template UUID
 	templateID := newID("tpl")
 
