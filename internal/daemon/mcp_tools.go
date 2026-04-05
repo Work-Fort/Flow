@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/charmbracelet/log"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/Work-Fort/Flow/internal/domain"
+	"github.com/Work-Fort/Flow/internal/workflow"
 )
 
 // jsonResult serializes v to indented JSON and returns it as an MCP text result.
@@ -230,69 +230,15 @@ func registerTools(s *server.MCPServer, deps MCPDeps) {
 			actorRoleID := req.GetString("actor_role_id", "")
 			reason := req.GetString("reason", "")
 
-			w, err := deps.Store.GetWorkItem(ctx, id)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get work item failed: %v", err)), nil
-			}
-			inst, err := deps.Store.GetInstance(ctx, w.InstanceID)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get instance failed: %v", err)), nil
-			}
-			tmpl, err := deps.Store.GetTemplate(ctx, inst.TemplateID)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get template failed: %v", err)), nil
-			}
-
-			var tr *domain.Transition
-			for i := range tmpl.Transitions {
-				if tmpl.Transitions[i].ID == transitionID {
-					tr = &tmpl.Transitions[i]
-					break
-				}
-			}
-			if tr == nil {
-				return mcp.NewToolResultError(domain.ErrInvalidTransition.Error()), nil
-			}
-			if w.CurrentStepID != tr.FromStepID {
-				return mcp.NewToolResultError(domain.ErrInvalidTransition.Error()), nil
-			}
-
-			guardCtx := domain.GuardContext{
-				Item: domain.GuardItem{
-					Title:    w.Title,
-					Priority: string(w.Priority),
-					Step:     w.CurrentStepID,
-				},
-				Actor: domain.GuardActor{
-					RoleID:  actorRoleID,
-					AgentID: actorAgentID,
-				},
-			}
-			if err := domain.EvaluateGuard(tr.Guard, guardCtx); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("guard denied: %v", err)), nil
-			}
-
-			fromStepID := w.CurrentStepID
-			w.CurrentStepID = tr.ToStepID
-			if err := deps.Store.UpdateWorkItem(ctx, w); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("update work item failed: %v", err)), nil
-			}
-			h := &domain.TransitionHistory{
-				ID:           NewID("th"),
-				WorkItemID:   w.ID,
-				FromStepID:   fromStepID,
-				ToStepID:     tr.ToStepID,
-				TransitionID: tr.ID,
-				TriggeredBy:  actorAgentID,
+			updated, err := deps.Svc.TransitionItem(ctx, workflow.TransitionRequest{
+				WorkItemID:   id,
+				TransitionID: transitionID,
+				ActorAgentID: actorAgentID,
+				ActorRoleID:  actorRoleID,
 				Reason:       reason,
-			}
-			if err := deps.Store.RecordTransition(ctx, h); err != nil {
-				log.Warn("record transition history", "err", err)
-			}
-
-			updated, err := deps.Store.GetWorkItem(ctx, w.ID)
+			})
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get work item failed: %v", err)), nil
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return jsonResult(updated)
 		},
@@ -311,71 +257,13 @@ func registerTools(s *server.MCPServer, deps MCPDeps) {
 			agentID := req.GetString("agent_id", "")
 			comment := req.GetString("comment", "")
 
-			w, err := deps.Store.GetWorkItem(ctx, id)
+			updated, err := deps.Svc.ApproveItem(ctx, workflow.ApproveRequest{
+				WorkItemID: id,
+				AgentID:    agentID,
+				Comment:    comment,
+			})
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get work item failed: %v", err)), nil
-			}
-			inst, err := deps.Store.GetInstance(ctx, w.InstanceID)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get instance failed: %v", err)), nil
-			}
-			tmpl, err := deps.Store.GetTemplate(ctx, inst.TemplateID)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get template failed: %v", err)), nil
-			}
-			var currentStep *domain.Step
-			for i := range tmpl.Steps {
-				if tmpl.Steps[i].ID == w.CurrentStepID {
-					currentStep = &tmpl.Steps[i]
-					break
-				}
-			}
-			if currentStep == nil || currentStep.Type != domain.StepTypeGate {
-				return mcp.NewToolResultError(domain.ErrNotAtGateStep.Error()), nil
-			}
-
-			a := &domain.Approval{
-				ID: NewID("apr"), WorkItemID: w.ID, StepID: w.CurrentStepID,
-				AgentID: agentID, Decision: domain.ApprovalDecisionApproved, Comment: comment,
-			}
-			if err := deps.Store.RecordApproval(ctx, a); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("record approval failed: %v", err)), nil
-			}
-
-			if currentStep.Approval != nil {
-				approvals, _ := deps.Store.ListApprovals(ctx, w.ID, w.CurrentStepID)
-				approvedCount := 0
-				for _, ap := range approvals {
-					if ap.Decision == domain.ApprovalDecisionApproved {
-						approvedCount++
-					}
-				}
-				if currentStep.Approval.Mode == domain.ApprovalModeAny &&
-					approvedCount >= currentStep.Approval.RequiredApprovers {
-					for i := range tmpl.Transitions {
-						tr := &tmpl.Transitions[i]
-						if tr.FromStepID == w.CurrentStepID &&
-							tr.ToStepID != currentStep.Approval.RejectionStepID {
-							w.CurrentStepID = tr.ToStepID
-							deps.Store.UpdateWorkItem(ctx, w) //nolint:errcheck
-							h := &domain.TransitionHistory{
-								ID: NewID("th"), WorkItemID: w.ID,
-								FromStepID: tr.FromStepID, ToStepID: tr.ToStepID,
-								TransitionID: tr.ID, TriggeredBy: agentID,
-								Reason: "auto-advance on approval threshold",
-							}
-							if err := deps.Store.RecordTransition(ctx, h); err != nil {
-								log.Warn("record auto-advance transition history", "err", err)
-							}
-							break
-						}
-					}
-				}
-			}
-
-			updated, err := deps.Store.GetWorkItem(ctx, w.ID)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get work item failed: %v", err)), nil
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return jsonResult(updated)
 		},
@@ -394,61 +282,13 @@ func registerTools(s *server.MCPServer, deps MCPDeps) {
 			agentID := req.GetString("agent_id", "")
 			comment := req.GetString("comment", "")
 
-			w, err := deps.Store.GetWorkItem(ctx, id)
+			updated, err := deps.Svc.RejectItem(ctx, workflow.RejectRequest{
+				WorkItemID: id,
+				AgentID:    agentID,
+				Comment:    comment,
+			})
 			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get work item failed: %v", err)), nil
-			}
-			inst, err := deps.Store.GetInstance(ctx, w.InstanceID)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get instance failed: %v", err)), nil
-			}
-			tmpl, err := deps.Store.GetTemplate(ctx, inst.TemplateID)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get template failed: %v", err)), nil
-			}
-			var currentStep *domain.Step
-			for i := range tmpl.Steps {
-				if tmpl.Steps[i].ID == w.CurrentStepID {
-					currentStep = &tmpl.Steps[i]
-					break
-				}
-			}
-			if currentStep == nil || currentStep.Type != domain.StepTypeGate {
-				return mcp.NewToolResultError(domain.ErrNotAtGateStep.Error()), nil
-			}
-
-			a := &domain.Approval{
-				ID: NewID("apr"), WorkItemID: w.ID, StepID: w.CurrentStepID,
-				AgentID: agentID, Decision: domain.ApprovalDecisionRejected, Comment: comment,
-			}
-			if err := deps.Store.RecordApproval(ctx, a); err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("record rejection failed: %v", err)), nil
-			}
-
-			if currentStep.Approval != nil && currentStep.Approval.RejectionStepID != "" {
-				fromStepID := w.CurrentStepID
-				w.CurrentStepID = currentStep.Approval.RejectionStepID
-				deps.Store.UpdateWorkItem(ctx, w) //nolint:errcheck
-				for i := range tmpl.Transitions {
-					tr := &tmpl.Transitions[i]
-					if tr.FromStepID == fromStepID && tr.ToStepID == currentStep.Approval.RejectionStepID {
-						h := &domain.TransitionHistory{
-							ID: NewID("th"), WorkItemID: w.ID,
-							FromStepID: fromStepID, ToStepID: currentStep.Approval.RejectionStepID,
-							TransitionID: tr.ID, TriggeredBy: agentID,
-							Reason: "rejected: " + comment,
-						}
-						if err := deps.Store.RecordTransition(ctx, h); err != nil {
-							log.Warn("record rejection transition history", "err", err)
-						}
-						break
-					}
-				}
-			}
-
-			updated, err := deps.Store.GetWorkItem(ctx, w.ID)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get work item failed: %v", err)), nil
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			return jsonResult(updated)
 		},

@@ -7,11 +7,13 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/Work-Fort/Flow/internal/domain"
+	"github.com/Work-Fort/Flow/internal/workflow"
 )
 
 // MCPDeps holds the dependencies injected into MCP tool handlers.
 type MCPDeps struct {
 	Store domain.Store
+	Svc   *workflow.Service
 }
 
 // NewMCPHandler creates the mcp-go StreamableHTTPServer and returns it as
