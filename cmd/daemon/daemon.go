@@ -27,8 +27,8 @@ func NewCmd() *cobra.Command {
 	var port int
 	var db string
 	var passportURL string
+	var serviceToken string
 	var hiveURL string
-	var hiveToken string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -46,13 +46,13 @@ func NewCmd() *cobra.Command {
 			if !cmd.Flags().Changed("passport-url") {
 				passportURL = viper.GetString("passport-url")
 			}
+			if !cmd.Flags().Changed("service-token") {
+				serviceToken = viper.GetString("service-token")
+			}
 			if !cmd.Flags().Changed("hive-url") {
 				hiveURL = viper.GetString("hive-url")
 			}
-			if !cmd.Flags().Changed("hive-token") {
-				hiveToken = viper.GetString("hive-token")
-			}
-			return run(bind, port, db, passportURL, hiveURL, hiveToken)
+			return run(bind, port, db, passportURL, serviceToken, hiveURL)
 		},
 	}
 
@@ -60,13 +60,13 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().IntVar(&port, "port", 17200, "Listen port")
 	cmd.Flags().StringVar(&db, "db", "", "Database file path (empty = default location)")
 	cmd.Flags().StringVar(&passportURL, "passport-url", "", "Passport auth service URL")
+	cmd.Flags().StringVar(&serviceToken, "service-token", "", "Service identity token (Passport API key)")
 	cmd.Flags().StringVar(&hiveURL, "hive-url", "", "Hive identity service URL")
-	cmd.Flags().StringVar(&hiveToken, "hive-token", "", "Hive API token")
 
 	return cmd
 }
 
-func run(bind string, port int, db, passportURL, hiveURL, hiveToken string) error {
+func run(bind string, port int, db, passportURL, serviceToken, hiveURL string) error {
 	health := flowDaemon.NewHealthService()
 
 	// Database
@@ -93,8 +93,8 @@ func run(bind string, port int, db, passportURL, hiveURL, hiveToken string) erro
 		Bind:        bind,
 		Port:        port,
 		PassportURL: passportURL,
-		HiveURL:     hiveURL,
-		HiveToken:   hiveToken,
+		HiveURL:      hiveURL,
+		ServiceToken: serviceToken,
 		Health:      health,
 		Store:       store,
 	})

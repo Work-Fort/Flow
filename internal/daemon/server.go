@@ -25,9 +25,9 @@ import (
 type ServerConfig struct {
 	Bind        string
 	Port        int
-	PassportURL string
-	HiveURL     string
-	HiveToken   string
+	PassportURL  string
+	ServiceToken string
+	HiveURL      string
 	Health      *HealthService
 	Store       domain.Store
 }
@@ -42,7 +42,7 @@ func NewServer(cfg ServerConfig) *http.Server {
 
 	var identityProvider domain.IdentityProvider
 	if cfg.HiveURL != "" {
-		identityProvider = hiveinfra.New(cfg.HiveURL, cfg.HiveToken)
+		identityProvider = hiveinfra.New(cfg.HiveURL, cfg.ServiceToken)
 	}
 	svc := workflow.New(cfg.Store, identityProvider)
 	registerTemplateRoutes(api, cfg.Store)
