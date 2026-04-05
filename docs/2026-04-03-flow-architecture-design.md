@@ -696,6 +696,34 @@ Instance level, not baked into the template.
 
 ## Future Considerations
 
+### Work Item Dependencies and Categories
+
+Work items need a first-class dependency model:
+
+- **`BlockedBy []string`** on work items — list of work item IDs that must
+  resolve before this item can advance
+- **Domain enforcement** — transition handler blocks advancement if any
+  dependency is unresolved (`ErrBlockedByDependency`)
+- **CEL guard access** — `dependencies.all_resolved`, `dependencies.count`,
+  and per-dependency state (`step`, `category`) available in guard expressions
+  for nuanced conditions (e.g., "allow if all backend blockers are past testing")
+- **Cross-instance dependencies** — "Hive API change" blocks "Flow adapter"
+  across different teams and workflow instances. Many-to-many: a single work
+  item can depend on items across multiple instances (e.g., frontend depends
+  on two backend teams' deployments). Work item UUIDs are globally unique, so
+  cross-instance lookups work via existing `GetWorkItem` by ID
+- **Dependency access control** — cross-instance dependencies require read
+  access to the target instance. Instances are visible to their team by
+  default. Cross-instance reads require either public visibility on the
+  target instance or an explicit access grant. Read access for dependency
+  queries does not imply write access (cannot transition or modify the
+  blocking item)
+- **Work item categories** — `backend`, `frontend`, `worker`, `infra`, etc.
+  Used for agent routing (role mappings filtered by category) and dependency
+  queries (e.g., "all backend dependencies resolved before frontend deploys")
+- **Bug entry point** — bugs should enter at Requirements step (not Planning),
+  since bugs have clearly defined "it should do X but doesn't" requirements
+
 ### v2 Scope
 
 - **Parallel fork/join step types** — for processes requiring concurrent work
