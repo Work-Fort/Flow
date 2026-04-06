@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/log"
@@ -16,20 +17,25 @@ import (
 	"github.com/Work-Fort/Passport/go/service-auth/apikey"
 	"github.com/Work-Fort/Passport/go/service-auth/jwt"
 
+	pylonclient "github.com/Work-Fort/Pylon/client/go"
+
 	"github.com/Work-Fort/Flow/internal/domain"
 	hiveinfra "github.com/Work-Fort/Flow/internal/infra/hive"
+	sharkfininfra "github.com/Work-Fort/Flow/internal/infra/sharkfin"
 	"github.com/Work-Fort/Flow/internal/workflow"
 )
 
 // ServerConfig holds configuration for the HTTP server.
 type ServerConfig struct {
-	Bind        string
-	Port        int
-	PassportURL  string
-	ServiceToken string
-	HiveURL      string
-	Health      *HealthService
-	Store       domain.Store
+	Bind           string
+	Port           int
+	PassportURL    string
+	ServiceToken   string
+	HiveURL        string
+	PylonURL       string
+	WebhookBaseURL string
+	Health         *HealthService
+	Store          domain.Store
 }
 
 // NewServer creates and configures the HTTP server.
@@ -44,7 +50,39 @@ func NewServer(cfg ServerConfig) *http.Server {
 	if cfg.HiveURL != "" {
 		identityProvider = hiveinfra.New(cfg.HiveURL, cfg.ServiceToken)
 	}
+
+	// Sharkfin chat adapter — discovered via Pylon. Optional: if Pylon URL is
+	// not set or Sharkfin is not registered, chat notifications are skipped.
+	var chatAdapter *sharkfininfra.Adapter
+	if cfg.PylonURL != "" {
+		pylonClient := pylonclient.New(cfg.PylonURL, cfg.ServiceToken)
+		startupCtx, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer startupCancel()
+		if sharkfinSvc, err := pylonClient.ServiceByName(startupCtx, "sharkfin"); err == nil {
+			if a, err := sharkfininfra.New(startupCtx, sharkfinSvc.BaseURL, cfg.ServiceToken); err == nil {
+				chatAdapter = a
+				// Bot lifecycle: register identity and webhook.
+				if err := a.Register(startupCtx); err != nil {
+					log.Warn("sharkfin register failed", "err", err)
+				}
+				if cfg.WebhookBaseURL != "" {
+					callbackURL := strings.TrimRight(cfg.WebhookBaseURL, "/") + "/v1/webhooks/sharkfin"
+					if _, err := a.RegisterWebhook(startupCtx, callbackURL); err != nil {
+						log.Warn("sharkfin register webhook failed", "err", err)
+					}
+				}
+			} else {
+				log.Warn("sharkfin dial failed, chat disabled", "err", err)
+			}
+		} else {
+			log.Warn("sharkfin not found in Pylon, chat disabled", "err", err)
+		}
+	}
+
 	svc := workflow.New(cfg.Store, identityProvider)
+	if chatAdapter != nil {
+		svc = svc.WithChat(chatAdapter)
+	}
 	registerTemplateRoutes(api, cfg.Store)
 	registerInstanceRoutes(api, cfg.Store)
 	registerWorkItemRoutes(api, cfg.Store)
@@ -54,6 +92,9 @@ func NewServer(cfg ServerConfig) *http.Server {
 	// Health — raw handler (conditional status codes 200/218/503)
 	mux.HandleFunc("GET /v1/health", HandleHealth(cfg.Health))
 	mux.HandleFunc("GET /ui/health", HandleUIHealth())
+
+	// Sharkfin webhook receiver.
+	mux.Handle("POST /v1/webhooks/sharkfin", HandleSharkfinWebhook(nil))
 
 	// MCP server — raw handler (JSON-RPC 2.0, not REST)
 	mcpHandler := NewMCPHandler(MCPDeps{

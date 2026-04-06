@@ -100,13 +100,15 @@ func run(bind string, port int, db, passportURL, serviceToken, hiveURL, pylonURL
 	})
 
 	srv := flowDaemon.NewServer(flowDaemon.ServerConfig{
-		Bind:        bind,
-		Port:        port,
-		PassportURL: passportURL,
-		HiveURL:      hiveURL,
-		ServiceToken: serviceToken,
-		Health:      health,
-		Store:       store,
+		Bind:           bind,
+		Port:           port,
+		PassportURL:    passportURL,
+		HiveURL:        hiveURL,
+		ServiceToken:   serviceToken,
+		PylonURL:       pylonURL,
+		WebhookBaseURL: webhookBaseURL,
+		Health:         health,
+		Store:          store,
 	})
 
 	sigCh := make(chan os.Signal, 1)
