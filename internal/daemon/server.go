@@ -25,14 +25,22 @@ import (
 	"github.com/Work-Fort/Flow/internal/workflow"
 )
 
+// PylonServices holds the Pylon-registered service names for each downstream dependency.
+// Values are passed to pylonClient.ServiceByName — override in config if your
+// service is registered under a non-default name (e.g. "borg" instead of "hive").
+type PylonServices struct {
+	Hive     string
+	Sharkfin string
+}
+
 // ServerConfig holds configuration for the HTTP server.
 type ServerConfig struct {
 	Bind           string
 	Port           int
 	PassportURL    string
 	ServiceToken   string
-	HiveURL        string
 	PylonURL       string
+	PylonServices  PylonServices
 	WebhookBaseURL string
 	Health         *HealthService
 	Store          domain.Store
@@ -47,21 +55,24 @@ func NewServer(cfg ServerConfig) *http.Server {
 	api := humago.New(mux, config)
 
 	var identityProvider domain.IdentityProvider
-	if cfg.HiveURL != "" {
-		identityProvider = hiveinfra.New(cfg.HiveURL, cfg.ServiceToken)
-	}
-
-	// Sharkfin chat adapter — discovered via Pylon. Optional: if Pylon URL is
-	// not set or Sharkfin is not registered, chat notifications are skipped.
 	var chatAdapter *sharkfininfra.Adapter
+
 	if cfg.PylonURL != "" {
 		pylonClient := pylonclient.New(cfg.PylonURL, cfg.ServiceToken)
 		startupCtx, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer startupCancel()
-		if sharkfinSvc, err := pylonClient.ServiceByName(startupCtx, "sharkfin"); err == nil {
+
+		// Discover Hive via Pylon.
+		if hiveSvc, err := pylonClient.ServiceByName(startupCtx, cfg.PylonServices.Hive); err == nil {
+			identityProvider = hiveinfra.New(hiveSvc.BaseURL, cfg.ServiceToken)
+		} else {
+			log.Warn("hive not found in Pylon, identity checks disabled", "err", err)
+		}
+
+		// Discover Sharkfin via Pylon.
+		if sharkfinSvc, err := pylonClient.ServiceByName(startupCtx, cfg.PylonServices.Sharkfin); err == nil {
 			if a, err := sharkfininfra.New(startupCtx, sharkfinSvc.BaseURL, cfg.ServiceToken); err == nil {
 				chatAdapter = a
-				// Bot lifecycle: register identity and webhook.
 				if err := a.Register(startupCtx); err != nil {
 					log.Warn("sharkfin register failed", "err", err)
 				}
