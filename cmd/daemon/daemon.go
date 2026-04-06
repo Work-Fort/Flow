@@ -28,7 +28,6 @@ func NewCmd() *cobra.Command {
 	var db string
 	var passportURL string
 	var serviceToken string
-	var hiveURL string
 	var pylonURL string
 	var webhookBaseURL string
 
@@ -51,16 +50,17 @@ func NewCmd() *cobra.Command {
 			if !cmd.Flags().Changed("service-token") {
 				serviceToken = viper.GetString("service-token")
 			}
-			if !cmd.Flags().Changed("hive-url") {
-				hiveURL = viper.GetString("hive-url")
-			}
 			if !cmd.Flags().Changed("pylon-url") {
-				pylonURL = viper.GetString("pylon-url")
+				pylonURL = viper.GetString("pylon.url")
 			}
 			if !cmd.Flags().Changed("webhook-base-url") {
 				webhookBaseURL = viper.GetString("webhook-base-url")
 			}
-			return run(bind, port, db, passportURL, serviceToken, hiveURL, pylonURL, webhookBaseURL)
+
+			hiveSvcName := viper.GetString("pylon.services.hive")
+			sharkfinSvcName := viper.GetString("pylon.services.sharkfin")
+
+			return run(bind, port, db, passportURL, serviceToken, pylonURL, webhookBaseURL, hiveSvcName, sharkfinSvcName)
 		},
 	}
 
@@ -69,17 +69,15 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&db, "db", "", "Database file path (empty = default location)")
 	cmd.Flags().StringVar(&passportURL, "passport-url", "", "Passport auth service URL")
 	cmd.Flags().StringVar(&serviceToken, "service-token", "", "Service identity token (Passport API key)")
-	cmd.Flags().StringVar(&hiveURL, "hive-url", "", "Hive identity service URL")
 	cmd.Flags().StringVar(&pylonURL, "pylon-url", "", "Pylon service registry URL")
 	cmd.Flags().StringVar(&webhookBaseURL, "webhook-base-url", "", "Flow's externally reachable base URL for webhook callbacks")
 
 	return cmd
 }
 
-func run(bind string, port int, db, passportURL, serviceToken, hiveURL, pylonURL, webhookBaseURL string) error {
+func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhookBaseURL, hiveSvcName, sharkfinSvcName string) error {
 	health := flowDaemon.NewHealthService()
 
-	// Database
 	dsn := db
 	if dsn == "" {
 		dsn = filepath.Join(config.GlobalPaths.StateDir, "flow.db")
@@ -91,7 +89,6 @@ func run(bind string, port int, db, passportURL, serviceToken, hiveURL, pylonURL
 	}
 	defer store.Close()
 
-	// Periodic check: database connectivity
 	health.RegisterPeriodicCheck("db", func(ctx context.Context) flowDaemon.CheckResult {
 		if err := store.Ping(ctx); err != nil {
 			return flowDaemon.CheckResult{Severity: flowDaemon.SeverityError, Message: err.Error()}
@@ -100,12 +97,15 @@ func run(bind string, port int, db, passportURL, serviceToken, hiveURL, pylonURL
 	})
 
 	srv := flowDaemon.NewServer(flowDaemon.ServerConfig{
-		Bind:           bind,
-		Port:           port,
-		PassportURL:    passportURL,
-		HiveURL:        hiveURL,
-		ServiceToken:   serviceToken,
-		PylonURL:       pylonURL,
+		Bind:         bind,
+		Port:         port,
+		PassportURL:  passportURL,
+		ServiceToken: serviceToken,
+		PylonURL:     pylonURL,
+		PylonServices: flowDaemon.PylonServices{
+			Hive:     hiveSvcName,
+			Sharkfin: sharkfinSvcName,
+		},
 		WebhookBaseURL: webhookBaseURL,
 		Health:         health,
 		Store:          store,
