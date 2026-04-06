@@ -23,9 +23,11 @@ svc-flow."
 Config should look like:
 ```
 FLOW_PASSPORT_URL=http://passport:3000
-FLOW_PASSPORT_TOKEN=wf-svc_flow_xxxxx
-FLOW_HIVE_URL=http://hive:17100
-FLOW_SHARKFIN_URL=http://sharkfin:16000
+FLOW_SERVICE_TOKEN=wf-svc_flow_xxxxx
+FLOW_PYLON_URL=http://pylon:17300
+# Service names default to "hive" and "sharkfin" — override only if needed:
+# FLOW_PYLON_SERVICES_HIVE=hive
+# FLOW_PYLON_SERVICES_SHARKFIN=sharkfin
 ```
 
 Not:
