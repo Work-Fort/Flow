@@ -57,7 +57,7 @@ func HandleSharkfinWebhook(handler CommandHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var payload sharkfinWebhookPayload
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 

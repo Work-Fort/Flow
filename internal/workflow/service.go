@@ -319,6 +319,7 @@ func (s *Service) ApproveItem(ctx context.Context, req ApproveRequest) (*domain.
 				if err := s.store.RecordTransition(ctx, h); err != nil {
 					return nil, err
 				}
+				s.fireTransitionHooks(ctx, tmpl, w, chosen.ID)
 			}
 		}
 	}
@@ -386,6 +387,7 @@ func (s *Service) RejectItem(ctx context.Context, req RejectRequest) (*domain.Wo
 				if err := s.store.RecordTransition(ctx, h); err != nil {
 					return nil, err
 				}
+				s.fireTransitionHooks(ctx, tmpl, w, tr.ID)
 				break
 			}
 		}
