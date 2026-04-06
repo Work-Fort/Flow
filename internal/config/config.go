@@ -81,8 +81,9 @@ func InitViper() {
 	viper.SetDefault("db", "")
 	viper.SetDefault("passport-url", "")
 	viper.SetDefault("service-token", "")
-	viper.SetDefault("hive-url", "")
-	viper.SetDefault("pylon-url", "")
+	viper.SetDefault("pylon.url", "")
+	viper.SetDefault("pylon.services.hive", "hive")
+	viper.SetDefault("pylon.services.sharkfin", "sharkfin")
 	viper.SetDefault("webhook-base-url", "")
 
 	viper.SetConfigName(ConfigFileName)
