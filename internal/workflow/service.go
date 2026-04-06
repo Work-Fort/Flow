@@ -20,12 +20,19 @@ import (
 type Service struct {
 	store    domain.Store
 	identity domain.IdentityProvider
+	chat     domain.ChatProvider
 }
 
-// New creates a new Service. identity may be nil — if so, role checks are
-// skipped (backwards-compatible, open-access behaviour).
+// New creates a new Service. identity and chat may each be nil — if so,
+// role checks and chat notifications are skipped respectively.
 func New(store domain.Store, identity domain.IdentityProvider) *Service {
 	return &Service{store: store, identity: identity}
+}
+
+// WithChat sets the optional ChatProvider. Returns s for chaining.
+func (s *Service) WithChat(chat domain.ChatProvider) *Service {
+	s.chat = chat
+	return s
 }
 
 // TransitionRequest holds all parameters for a work item transition.
@@ -169,6 +176,8 @@ func (s *Service) TransitionItem(ctx context.Context, req TransitionRequest) (*d
 	if err := s.store.RecordTransition(ctx, h); err != nil {
 		return nil, err
 	}
+
+	s.fireTransitionHooks(ctx, tmpl, w, tr.ID)
 
 	return s.store.GetWorkItem(ctx, w.ID)
 }
