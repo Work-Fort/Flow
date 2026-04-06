@@ -3,6 +3,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 )
 
@@ -45,6 +46,20 @@ type Store interface {
 	ApprovalStore
 	Ping(ctx context.Context) error
 	io.Closer
+}
+
+// ChatProvider posts messages and manages channels in an external chat service.
+// It is an optional dependency — if nil, chat notifications are skipped.
+type ChatProvider interface {
+	// PostMessage sends a message to the named channel and returns the message ID.
+	// metadata may be nil.
+	PostMessage(ctx context.Context, channel, content string, metadata json.RawMessage) (int64, error)
+
+	// CreateChannel creates a channel with the given name and visibility.
+	CreateChannel(ctx context.Context, name string, public bool) error
+
+	// JoinChannel joins the named channel.
+	JoinChannel(ctx context.Context, channel string) error
 }
 
 // IdentityProvider resolves agents and roles from an external identity service.
