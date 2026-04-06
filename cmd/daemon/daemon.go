@@ -29,6 +29,8 @@ func NewCmd() *cobra.Command {
 	var passportURL string
 	var serviceToken string
 	var hiveURL string
+	var pylonURL string
+	var webhookBaseURL string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -52,7 +54,13 @@ func NewCmd() *cobra.Command {
 			if !cmd.Flags().Changed("hive-url") {
 				hiveURL = viper.GetString("hive-url")
 			}
-			return run(bind, port, db, passportURL, serviceToken, hiveURL)
+			if !cmd.Flags().Changed("pylon-url") {
+				pylonURL = viper.GetString("pylon-url")
+			}
+			if !cmd.Flags().Changed("webhook-base-url") {
+				webhookBaseURL = viper.GetString("webhook-base-url")
+			}
+			return run(bind, port, db, passportURL, serviceToken, hiveURL, pylonURL, webhookBaseURL)
 		},
 	}
 
@@ -62,11 +70,13 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&passportURL, "passport-url", "", "Passport auth service URL")
 	cmd.Flags().StringVar(&serviceToken, "service-token", "", "Service identity token (Passport API key)")
 	cmd.Flags().StringVar(&hiveURL, "hive-url", "", "Hive identity service URL")
+	cmd.Flags().StringVar(&pylonURL, "pylon-url", "", "Pylon service registry URL")
+	cmd.Flags().StringVar(&webhookBaseURL, "webhook-base-url", "", "Flow's externally reachable base URL for webhook callbacks")
 
 	return cmd
 }
 
-func run(bind string, port int, db, passportURL, serviceToken, hiveURL string) error {
+func run(bind string, port int, db, passportURL, serviceToken, hiveURL, pylonURL, webhookBaseURL string) error {
 	health := flowDaemon.NewHealthService()
 
 	// Database
