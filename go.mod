@@ -19,6 +19,8 @@ require (
 require (
 	cel.dev/expr v0.25.1 // indirect
 	github.com/Work-Fort/Hive v0.0.0-00010101000000-000000000000 // indirect
+	github.com/Work-Fort/Pylon/client/go v0.0.1 // indirect
+	github.com/Work-Fort/sharkfin/client/go v0.1.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
@@ -34,6 +36,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -81,3 +84,7 @@ require (
 )
 
 replace github.com/Work-Fort/Hive => /home/kazw/Work/WorkFort/hive/lead
+
+replace github.com/Work-Fort/sharkfin/client/go => /home/kazw/Work/WorkFort/sharkfin/lead/client/go
+
+replace github.com/Work-Fort/Pylon/client/go => /home/kazw/Work/WorkFort/pylon/lead/client/go
