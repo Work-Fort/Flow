@@ -1,0 +1,260 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          path: flow
+
+      - name: Check out Hive
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/Hive
+          path: hive
+
+      - name: Check out Sharkfin
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/sharkfin
+          path: sharkfin
+
+      - name: Check out Pylon
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/Pylon
+          path: pylon
+
+      - uses: jdx/mise-action@v3
+        with:
+          working_directory: flow
+
+      - name: Rewrite replace directives for CI paths
+        working-directory: flow
+        run: |
+          go mod edit \
+            -replace github.com/Work-Fort/Hive=../hive \
+            -replace "github.com/Work-Fort/sharkfin/client/go=../sharkfin/client/go" \
+            -replace "github.com/Work-Fort/Pylon/client/go=../pylon/client/go"
+          go mod tidy
+
+      - run: mise run ci
+        working-directory: flow
+
+  tag:
+    name: Create Version Tag
+    runs-on: ubuntu-latest
+    needs: [test]
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+      changelog: ${{ steps.tag_version.outputs.changelog }}
+      should_release: ${{ steps.check_tag.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and create tag
+        id: tag_version
+        uses: Work-Fort/github-tag-action@v6.3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: false
+          release_branches: master
+          tag_prefix: v
+
+      - name: Check if new tag was created
+        id: check_tag
+        run: |
+          if [ -n "${{ steps.tag_version.outputs.new_tag }}" ]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: tag
+    if: needs.tag.outputs.should_release == 'true'
+    strategy:
+      matrix:
+        include:
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+          - target: linux-arm64
+            goos: linux
+            goarch: arm64
+          - target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+          - target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.new_tag }}
+          path: flow
+
+      - name: Check out Hive
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/Hive
+          path: hive
+
+      - name: Check out Sharkfin
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/sharkfin
+          path: sharkfin
+
+      - name: Check out Pylon
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/Pylon
+          path: pylon
+
+      - uses: jdx/mise-action@v3
+        with:
+          working_directory: flow
+
+      - name: Rewrite replace directives for CI paths
+        working-directory: flow
+        run: |
+          go mod edit \
+            -replace github.com/Work-Fort/Hive=../hive \
+            -replace "github.com/Work-Fort/sharkfin/client/go=../sharkfin/client/go" \
+            -replace "github.com/Work-Fort/Pylon/client/go=../pylon/client/go"
+          go mod tidy
+
+      - name: Build binary
+        working-directory: flow
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${{ needs.tag.outputs.new_tag }}"
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/Work-Fort/Flow/cmd.Version=${VERSION}" \
+            -o "flow-${{ matrix.target }}"
+
+      - name: Compress and generate checksum
+        working-directory: flow
+        run: |
+          TARGET="${{ matrix.target }}"
+          xz -z -9 "flow-${TARGET}"
+          sha256sum "flow-${TARGET}.xz" > "flow-${TARGET}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}-${{ needs.tag.outputs.new_tag }}
+          path: flow/flow-${{ matrix.target }}.*
+          retention-days: 7
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [tag, build]
+    if: needs.tag.outputs.should_release == 'true'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.tag.outputs.new_tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: '*-${{ needs.tag.outputs.new_tag }}'
+          merge-multiple: true
+
+      - name: Create SHA256SUMS
+        working-directory: artifacts
+        run: |
+          cat *.sha256 > SHA256SUMS
+          rm *.sha256
+
+      - name: Create release notes
+        env:
+          TAG: ${{ needs.tag.outputs.new_tag }}
+          CHANGELOG: ${{ needs.tag.outputs.changelog }}
+          REPO: ${{ github.repository }}
+        run: |
+          VERSION=$(echo "$TAG" | sed 's/^v//')
+          cat > release-notes.md << EOF
+          # Flow v${VERSION}
+
+          ## What's Changed
+
+          ${CHANGELOG}
+
+          ## Installation
+
+          ### Linux (x86_64)
+          \`\`\`bash
+          wget https://github.com/${REPO}/releases/download/${TAG}/flow-linux-amd64.xz
+          xz -d flow-linux-amd64.xz
+          chmod +x flow-linux-amd64
+          sudo mv flow-linux-amd64 /usr/local/bin/flow
+          \`\`\`
+
+          ### Linux (ARM64)
+          \`\`\`bash
+          wget https://github.com/${REPO}/releases/download/${TAG}/flow-linux-arm64.xz
+          xz -d flow-linux-arm64.xz
+          chmod +x flow-linux-arm64
+          sudo mv flow-linux-arm64 /usr/local/bin/flow
+          \`\`\`
+
+          ### macOS (Apple Silicon)
+          \`\`\`bash
+          wget https://github.com/${REPO}/releases/download/${TAG}/flow-darwin-arm64.xz
+          xz -d flow-darwin-arm64.xz
+          chmod +x flow-darwin-arm64
+          sudo mv flow-darwin-arm64 /usr/local/bin/flow
+          \`\`\`
+
+          ### macOS (Intel)
+          \`\`\`bash
+          wget https://github.com/${REPO}/releases/download/${TAG}/flow-darwin-amd64.xz
+          xz -d flow-darwin-amd64.xz
+          chmod +x flow-darwin-amd64
+          sudo mv flow-darwin-amd64 /usr/local/bin/flow
+          \`\`\`
+
+          ## Verification
+
+          \`\`\`bash
+          wget https://github.com/${REPO}/releases/download/${TAG}/SHA256SUMS
+          sha256sum -c SHA256SUMS --ignore-missing
+          \`\`\`
+
+          ---
+
+          Built automatically by [Flow CI](https://github.com/${REPO})
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag.outputs.new_tag }}
+          name: Release ${{ needs.tag.outputs.new_tag }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          files: artifacts/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
