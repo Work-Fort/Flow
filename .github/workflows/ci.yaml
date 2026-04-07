@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: GPL-2.0-only
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: flow
+
+      - name: Check out Hive
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/Hive
+          path: hive
+
+      - name: Check out Sharkfin
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/sharkfin
+          path: sharkfin
+
+      - name: Check out Pylon
+        uses: actions/checkout@v6
+        with:
+          repository: Work-Fort/Pylon
+          path: pylon
+
+      - uses: jdx/mise-action@v3
+        with:
+          working_directory: flow
+
+      - name: Rewrite replace directives for CI paths
+        working-directory: flow
+        run: |
+          go mod edit \
+            -replace github.com/Work-Fort/Hive=../hive \
+            -replace "github.com/Work-Fort/sharkfin/client/go=../sharkfin/client/go" \
+            -replace "github.com/Work-Fort/Pylon/client/go=../pylon/client/go"
+          go mod tidy
+
+      - run: mise run ci
+        working-directory: flow
