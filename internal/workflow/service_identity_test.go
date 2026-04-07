@@ -100,10 +100,10 @@ func buildTemplateWithRoleRequirement(t *testing.T, store domain.Store, roleID s
 
 // gateTemplateFixture holds IDs from a gate template built for approver-role tests.
 type gateTemplateFixture struct {
-	tmpl        *domain.WorkflowTemplate
-	taskStepID  string
-	gateStepID  string
-	doneStepID  string
+	tmpl       *domain.WorkflowTemplate
+	taskStepID string
+	gateStepID string
+	doneStepID string
 }
 
 // buildGateTemplateWithApproverRole creates and stores a 3-step template with
@@ -166,9 +166,9 @@ func buildWorkItem(t *testing.T, store domain.Store, instanceID, stepID string) 
 	return createItem(t, store, instanceID, stepID)
 }
 
-func firstStepID(f roleTemplateFixture) string  { return f.firstStepID }
+func firstStepID(f roleTemplateFixture) string       { return f.firstStepID }
 func firstTransitionID(f roleTemplateFixture) string { return f.transID }
-func gateStepID(f gateTemplateFixture) string   { return f.gateStepID }
+func gateStepID(f gateTemplateFixture) string        { return f.gateStepID }
 
 // --- tests ---
 

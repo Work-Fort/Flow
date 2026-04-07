@@ -14,18 +14,18 @@ import (
 //	Backlog (task, pos=0) --[triage]--> Planning (task, pos=1) --[submit]--> Review (gate, pos=2) --auto-advance--> Done (task, pos=3)
 //	Review --[rejection routing]--> Planning
 type sdlcFixture struct {
-	Store       domain.Store
-	Svc         *workflow.Service
-	TemplateID  string
-	Backlog     string
-	Planning    string
-	Review      string
-	Done        string
-	Triage      string // Backlog → Planning
-	Submit      string // Planning → Review
-	ReviewDone  string // Review → Done (used by auto-advance)
-	ReviewPlan  string // Review → Planning (rejection)
-	InstanceID  string
+	Store      domain.Store
+	Svc        *workflow.Service
+	TemplateID string
+	Backlog    string
+	Planning   string
+	Review     string
+	Done       string
+	Triage     string // Backlog → Planning
+	Submit     string // Planning → Review
+	ReviewDone string // Review → Done (used by auto-advance)
+	ReviewPlan string // Review → Planning (rejection)
+	InstanceID string
 }
 
 func seedSDLC(t *testing.T) sdlcFixture {
@@ -70,7 +70,7 @@ func seedSDLC(t *testing.T) sdlcFixture {
 	return sdlcFixture{
 		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID,
-		Backlog: backlog, Planning: planning, Review: review, Done: done,
+		Backlog:    backlog, Planning: planning, Review: review, Done: done,
 		Triage: triage, Submit: submit, ReviewDone: reviewDone, ReviewPlan: reviewPlan,
 		InstanceID: instID,
 	}

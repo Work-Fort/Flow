@@ -166,16 +166,16 @@ func seedGuarded(t *testing.T) guardedFixture {
 //	GateStep --[TransGateToC]--> StepC (task, pos=2)
 //	GateStep --[TransGateToA]--> StepA  (rejection path)
 type gateFixture struct {
-	Store       domain.Store
-	Svc         *workflow.Service
-	TemplateID  string
-	StepA       string
-	GateStep    string
-	StepC       string
-	TransAtoGate  string
-	TransGateToC  string
-	TransGateToA  string
-	InstanceID  string
+	Store        domain.Store
+	Svc          *workflow.Service
+	TemplateID   string
+	StepA        string
+	GateStep     string
+	StepC        string
+	TransAtoGate string
+	TransGateToC string
+	TransGateToA string
+	InstanceID   string
 }
 
 func seedGate(t *testing.T) gateFixture {
@@ -225,12 +225,12 @@ func seedGate(t *testing.T) gateFixture {
 //	StepA --[TransAtoB]--> StepB --[TransBtoC]--> StepC
 //	StepB --[TransBtoA]--> StepA
 type cycleFixture struct {
-	Store                   domain.Store
-	Svc                     *workflow.Service
-	TemplateID              string
-	StepA, StepB, StepC    string
+	Store                           domain.Store
+	Svc                             *workflow.Service
+	TemplateID                      string
+	StepA, StepB, StepC             string
 	TransAtoB, TransBtoC, TransBtoA string
-	InstanceID              string
+	InstanceID                      string
 }
 
 func seedCycle(t *testing.T) cycleFixture {
@@ -261,7 +261,7 @@ func seedCycle(t *testing.T) cycleFixture {
 	return cycleFixture{
 		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID,
-		StepA: stepA, StepB: stepB, StepC: stepC,
+		StepA:      stepA, StepB: stepB, StepC: stepC,
 		TransAtoB: transAB, TransBtoC: transBC, TransBtoA: transBA,
 		InstanceID: instID,
 	}
@@ -276,7 +276,7 @@ type multiTransFixture struct {
 	Store                domain.Store
 	Svc                  *workflow.Service
 	TemplateID           string
-	StepA, StepB, StepC string
+	StepA, StepB, StepC  string
 	TransAtoB, TransAtoC string
 	InstanceID           string
 }
@@ -307,7 +307,7 @@ func seedMultiTrans(t *testing.T) multiTransFixture {
 	return multiTransFixture{
 		Store: store, Svc: workflow.New(store, nil),
 		TemplateID: tplID,
-		StepA: stepA, StepB: stepB, StepC: stepC,
+		StepA:      stepA, StepB: stepB, StepC: stepC,
 		TransAtoB: transAB, TransAtoC: transAC,
 		InstanceID: instID,
 	}

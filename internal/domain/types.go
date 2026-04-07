@@ -9,11 +9,11 @@ import (
 	"time"
 )
 
-type StepType        string
-type ApprovalMode    string
+type StepType string
+type ApprovalMode string
 type ApprovalDecision string
-type InstanceStatus  string
-type Priority        string
+type InstanceStatus string
+type Priority string
 
 const (
 	StepTypeTask StepType = "task"

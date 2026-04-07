@@ -24,12 +24,12 @@ type templateResponse struct {
 }
 
 type stepResponse struct {
-	ID         string           `json:"id"`
-	TemplateID string           `json:"template_id"`
-	Key        string           `json:"key"`
-	Name       string           `json:"name"`
-	Type       string           `json:"type"`
-	Position   int              `json:"position"`
+	ID         string                `json:"id"`
+	TemplateID string                `json:"template_id"`
+	Key        string                `json:"key"`
+	Name       string                `json:"name"`
+	Type       string                `json:"type"`
+	Position   int                   `json:"position"`
 	Approval   *stepApprovalResponse `json:"approval,omitempty"`
 }
 
@@ -52,14 +52,14 @@ type transitionResponse struct {
 }
 
 type templateDetailResponse struct {
-	ID               string               `json:"id"`
-	Name             string               `json:"name"`
-	Description      string               `json:"description"`
-	Version          int                  `json:"version"`
-	Steps            []stepResponse       `json:"steps"`
-	Transitions      []transitionResponse `json:"transitions"`
-	CreatedAt        time.Time            `json:"created_at"`
-	UpdatedAt        time.Time            `json:"updated_at"`
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Version     int                  `json:"version"`
+	Steps       []stepResponse       `json:"steps"`
+	Transitions []transitionResponse `json:"transitions"`
+	CreatedAt   time.Time            `json:"created_at"`
+	UpdatedAt   time.Time            `json:"updated_at"`
 }
 
 type TemplateOutput struct {
@@ -174,9 +174,9 @@ type WorkItemHistoryOutput struct {
 }
 
 type ListWorkItemsInput struct {
-	ID      string `path:"id" doc:"Instance ID"`
-	StepID  string `query:"step_id" doc:"Filter by step ID"`
-	AgentID string `query:"agent_id" doc:"Filter by agent ID"`
+	ID       string `path:"id" doc:"Instance ID"`
+	StepID   string `query:"step_id" doc:"Filter by step ID"`
+	AgentID  string `query:"agent_id" doc:"Filter by agent ID"`
 	Priority string `query:"priority" doc:"Filter by priority"`
 }
 
@@ -203,10 +203,10 @@ type PatchWorkItemInput struct {
 type TransitionWorkItemInput struct {
 	ID   string `path:"id" doc:"Work item ID"`
 	Body struct {
-		TransitionID  string `json:"transition_id" doc:"Transition ID" minLength:"1"`
-		ActorAgentID  string `json:"actor_agent_id" doc:"Actor agent ID" minLength:"1"`
-		ActorRoleID   string `json:"actor_role_id" doc:"Actor role ID" minLength:"1"`
-		Reason        string `json:"reason,omitempty" doc:"Reason for transition"`
+		TransitionID string `json:"transition_id" doc:"Transition ID" minLength:"1"`
+		ActorAgentID string `json:"actor_agent_id" doc:"Actor agent ID" minLength:"1"`
+		ActorRoleID  string `json:"actor_role_id" doc:"Actor role ID" minLength:"1"`
+		Reason       string `json:"reason,omitempty" doc:"Reason for transition"`
 	}
 }
 
