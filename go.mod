@@ -8,6 +8,7 @@ require (
 	github.com/danielgtaylor/huma/v2 v2.37.3
 	github.com/google/cel-go v0.27.0
 	github.com/google/uuid v1.6.0
+	github.com/jackc/pgx/v5 v5.8.0
 	github.com/mark3labs/mcp-go v0.46.0
 	github.com/pressly/goose/v3 v3.27.0
 	github.com/spf13/cobra v1.10.2
@@ -16,7 +17,11 @@ require (
 	modernc.org/sqlite v1.48.1
 )
 
-require gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
+require (
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
+)
 
 require (
 	cel.dev/expr v0.25.1 // indirect

@@ -2,16 +2,19 @@
 package infra
 
 import (
-	"fmt"
+	"strings"
 
 	"github.com/Work-Fort/Flow/internal/domain"
+	"github.com/Work-Fort/Flow/internal/infra/postgres"
 	"github.com/Work-Fort/Flow/internal/infra/sqlite"
 )
 
+// Open returns a domain.Store backed by the database identified by dsn.
+// PostgreSQL DSNs (postgres:// or postgresql://) use the Postgres adapter;
+// everything else falls through to SQLite.
 func Open(dsn string) (domain.Store, error) {
-	s, err := sqlite.Open(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite store: %w", err)
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		return postgres.Open(dsn)
 	}
-	return s, nil
+	return sqlite.Open(dsn)
 }
