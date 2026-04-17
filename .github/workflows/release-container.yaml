@@ -15,30 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Check out Hive
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/Hive
-          path: vendor-local/hive
-
-      - name: Check out Sharkfin (for client/go)
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/sharkfin
-          path: vendor-local/sharkfin-client-go-repo
-
-      - name: Check out Pylon (for client/go)
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/Pylon
-          path: vendor-local/pylon-client-go-repo
-
-      - name: Extract client/go subdirectories
-        run: |
-          cp -r vendor-local/sharkfin-client-go-repo/client/go vendor-local/sharkfin-client-go
-          cp -r vendor-local/pylon-client-go-repo/client/go vendor-local/pylon-client-go
-          rm -rf vendor-local/sharkfin-client-go-repo vendor-local/pylon-client-go-repo
-
       - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR

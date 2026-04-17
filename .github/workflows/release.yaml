@@ -15,41 +15,8 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          path: flow
-
-      - name: Check out Hive
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/Hive
-          path: hive
-
-      - name: Check out Sharkfin
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/sharkfin
-          path: sharkfin
-
-      - name: Check out Pylon
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/Pylon
-          path: pylon
-
       - uses: jdx/mise-action@v3
-        with:
-          working_directory: flow
-
-      - name: Rewrite replace directives for CI paths
-        working-directory: flow
-        run: |
-          go mod edit \
-            -replace github.com/Work-Fort/Hive=../hive \
-            -replace "github.com/Work-Fort/sharkfin/client/go=../sharkfin/client/go" \
-            -replace "github.com/Work-Fort/Pylon/client/go=../pylon/client/go"
-          go mod tidy
-
       - run: mise run ci
-        working-directory: flow
 
   tag:
     name: Create Version Tag
@@ -107,41 +74,10 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ needs.tag.outputs.new_tag }}
-          path: flow
-
-      - name: Check out Hive
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/Hive
-          path: hive
-
-      - name: Check out Sharkfin
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/sharkfin
-          path: sharkfin
-
-      - name: Check out Pylon
-        uses: actions/checkout@v6
-        with:
-          repository: Work-Fort/Pylon
-          path: pylon
 
       - uses: jdx/mise-action@v3
-        with:
-          working_directory: flow
-
-      - name: Rewrite replace directives for CI paths
-        working-directory: flow
-        run: |
-          go mod edit \
-            -replace github.com/Work-Fort/Hive=../hive \
-            -replace "github.com/Work-Fort/sharkfin/client/go=../sharkfin/client/go" \
-            -replace "github.com/Work-Fort/Pylon/client/go=../pylon/client/go"
-          go mod tidy
 
       - name: Build binary
-        working-directory: flow
         env:
           CGO_ENABLED: '0'
           GOOS: ${{ matrix.goos }}
@@ -153,7 +89,6 @@ jobs:
             -o "flow-${{ matrix.target }}"
 
       - name: Compress and generate checksum
-        working-directory: flow
         run: |
           TARGET="${{ matrix.target }}"
           xz -z -9 "flow-${TARGET}"
@@ -162,7 +97,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}-${{ needs.tag.outputs.new_tag }}
-          path: flow/flow-${{ matrix.target }}.*
+          path: flow-${{ matrix.target }}.*
           retention-days: 7
 
   release:
