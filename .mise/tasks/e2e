@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+#MISE description="Run end-to-end tests against a real flow daemon (rebuilds via build:dev)"
+#MISE depends=["build:dev"]
+set -euo pipefail
+
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+export FLOW_BINARY="$REPO_ROOT/build/flow"
+
+if [[ ! -x "$FLOW_BINARY" ]]; then
+  echo "FLOW_BINARY not found at $FLOW_BINARY — run 'mise run build:dev' first" >&2
+  exit 1
+fi
+
+cd "$REPO_ROOT/tests/e2e"
+exec go test -race -count=1 ./...
