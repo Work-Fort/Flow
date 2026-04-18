@@ -6,8 +6,8 @@ github.com/Work-Fort/Passport/go/service-auth v0.0.2 h1:+09vzIDe8sV1++mQeyvUPv3H
 github.com/Work-Fort/Passport/go/service-auth v0.0.2/go.mod h1:lAXlkS7iOeRswc6ruJ+1wA7gpuBYHGQ0AElteNBIYyo=
 github.com/Work-Fort/Pylon/client/go v0.0.1 h1:7Tf2Yy2q4G+aBlkrC4aYcq5VMJab/GVusFMD378ppqo=
 github.com/Work-Fort/Pylon/client/go v0.0.1/go.mod h1:o60ni1goETmVWHhW0FqyclU4gwTQtU5qxtpavq4O9BY=
-github.com/Work-Fort/sharkfin/client/go v0.1.0 h1:NhvH5DSlX1r4fZB/LW52cL5fBvGthTxZWD5LG+UWrbc=
-github.com/Work-Fort/sharkfin/client/go v0.1.0/go.mod h1:TvnTfucZPY3BlLKFnKigefyJWBEtrd9ScLlaRtZfwP4=
+github.com/Work-Fort/sharkfin/client/go v0.2.0 h1:K/ZOYX3QyIXRN0Y59AOUXg4eR5V6AXiMS20yyhitjis=
+github.com/Work-Fort/sharkfin/client/go v0.2.0/go.mod h1:TvnTfucZPY3BlLKFnKigefyJWBEtrd9ScLlaRtZfwP4=
 github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=
 github.com/antlr4-go/antlr/v4 v4.13.1/go.mod h1:GKmUxMtwp6ZgGwZSva4eWPC5mS6vUAmOABFgjdkM7Nw=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
