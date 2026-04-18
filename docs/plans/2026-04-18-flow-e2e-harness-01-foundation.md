@@ -2,7 +2,7 @@
 type: plan
 step: "1"
 title: "Flow E2E harness — Step 1: foundation + adapter switch + first proof"
-status: pending
+status: approved
 assessment_status: complete
 provenance:
   source: roadmap
@@ -10,7 +10,7 @@ provenance:
   roadmap_step: "1"
 dates:
   created: "2026-04-18"
-  approved: null
+  approved: "2026-04-18"
   completed: null
 related_plans: []
 ---
