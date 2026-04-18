@@ -3,7 +3,7 @@ type: plan
 step: "1"
 title: "Flow E2E harness — Step 1: foundation + adapter switch + first proof"
 status: pending
-assessment_status: needed
+assessment_status: complete
 provenance:
   source: roadmap
   issue_id: null
@@ -2088,4 +2088,4 @@ After all 11 tasks complete, the following must hold:
 
 ## Hand-off (planner workflow)
 
-This plan is `status: pending, assessment_status: needed`. Hand to the assessor before any implementation begins; do **not** commit during this planner phase.
+This plan is `status: pending, assessment_status: complete`. The plan has been reviewed and re-assessed; it awaits TPM approval. On approval the TPM flips `status: approved` and `dates.approved` in a separate commit, after which implementation may begin.
