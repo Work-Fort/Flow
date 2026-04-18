@@ -71,19 +71,16 @@ func NewServer(cfg ServerConfig) *http.Server {
 
 		// Discover Sharkfin via Pylon.
 		if sharkfinSvc, err := pylonClient.ServiceByName(startupCtx, cfg.PylonServices.Sharkfin); err == nil {
-			if a, err := sharkfininfra.New(startupCtx, sharkfinSvc.BaseURL, cfg.ServiceToken); err == nil {
-				chatAdapter = a
-				if err := a.Register(startupCtx); err != nil {
-					log.Warn("sharkfin register failed", "err", err)
+			a := sharkfininfra.New(sharkfinSvc.BaseURL, cfg.ServiceToken)
+			chatAdapter = a
+			if err := a.Register(startupCtx); err != nil {
+				log.Warn("sharkfin register failed", "err", err)
+			}
+			if cfg.WebhookBaseURL != "" {
+				callbackURL := strings.TrimRight(cfg.WebhookBaseURL, "/") + "/v1/webhooks/sharkfin"
+				if _, err := a.RegisterWebhook(startupCtx, callbackURL); err != nil {
+					log.Warn("sharkfin register webhook failed", "err", err)
 				}
-				if cfg.WebhookBaseURL != "" {
-					callbackURL := strings.TrimRight(cfg.WebhookBaseURL, "/") + "/v1/webhooks/sharkfin"
-					if _, err := a.RegisterWebhook(startupCtx, callbackURL); err != nil {
-						log.Warn("sharkfin register webhook failed", "err", err)
-					}
-				}
-			} else {
-				log.Warn("sharkfin dial failed, chat disabled", "err", err)
 			}
 		} else {
 			log.Warn("sharkfin not found in Pylon, chat disabled", "err", err)

@@ -7,47 +7,33 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	sharkfinclient "github.com/Work-Fort/sharkfin/client/go"
 
 	"github.com/Work-Fort/Flow/internal/domain"
 )
 
-// Adapter implements domain.ChatProvider using the Sharkfin WebSocket client.
-type Adapter struct {
-	client *sharkfinclient.Client
-}
-
-// New dials the Sharkfin server and returns an Adapter. baseURL is the HTTP
-// base URL returned by Pylon (e.g., "http://sharkfin:16000"). token is a
-// Passport JWT or API key.
+// Adapter implements domain.ChatProvider using the Sharkfin REST API.
 //
-// The WebSocket URL is derived by replacing the http(s) scheme with ws(s)
-// and appending "/ws".
-func New(ctx context.Context, baseURL, token string) (*Adapter, error) {
-	wsURL := httpToWS(baseURL) + "/ws"
-	c, err := sharkfinclient.Dial(ctx, wsURL, sharkfinclient.WithToken(token))
-	if err != nil {
-		return nil, fmt.Errorf("sharkfin dial %s: %w", wsURL, err)
-	}
-	return &Adapter{client: c}, nil
+// Flow receives chat events through the Sharkfin webhook receiver
+// (internal/daemon/webhook_sharkfin.go), so it has no need for the
+// WebSocket event stream. A REST-only client avoids the WS goroutine,
+// reconnection state, and pending-request machinery.
+type Adapter struct {
+	client *sharkfinclient.RESTClient
 }
 
-// httpToWS converts an HTTP base URL to the WebSocket equivalent.
-func httpToWS(u string) string {
-	u = strings.TrimRight(u, "/")
-	if strings.HasPrefix(u, "https://") {
-		return "wss://" + u[8:]
+// New constructs an Adapter. baseURL is the HTTP base URL returned by
+// Pylon (e.g., "http://sharkfin:16000"). token is a Passport JWT or
+// API key. No network I/O happens at construction time.
+func New(baseURL, token string) *Adapter {
+	return &Adapter{
+		client: sharkfinclient.NewRESTClient(baseURL, sharkfinclient.WithToken(token)),
 	}
-	if strings.HasPrefix(u, "http://") {
-		return "ws://" + u[7:]
-	}
-	return u
 }
 
 // PostMessage sends content to channel and returns the message ID.
-// metadata is attached as a JSON string sidecar on the message. If metadata
+// metadata is attached as a JSON sidecar on the message. If metadata
 // is nil or empty, no metadata is attached.
 func (a *Adapter) PostMessage(ctx context.Context, channel, content string, metadata json.RawMessage) (int64, error) {
 	var opts *sharkfinclient.SendOpts
@@ -104,7 +90,8 @@ func (a *Adapter) ListWebhooks(ctx context.Context) ([]sharkfinclient.Webhook, e
 	return whs, nil
 }
 
-// Close cleanly shuts down the WebSocket connection.
+// Close releases the underlying HTTP client. No-op for the REST
+// client today; provided so callers can write symmetric setup/teardown.
 func (a *Adapter) Close() error {
 	return a.client.Close()
 }
