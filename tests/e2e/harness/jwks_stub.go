@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,11 +17,17 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwt"
 )
 
+// apiKeyEntry records the identity claims to return for a registered
+// API key. Mirrors the structure Hive's e2e stub uses.
+type apiKeyEntry struct {
+	id, username, displayName, userType string
+}
+
 // StartJWKSStub starts an in-process Passport stub serving:
 //   - GET  /v1/jwks            — public key in JWKS format
-//   - POST /v1/verify-api-key  — accepts any non-empty key (except the literal
-//     "INVALID"), returns a canned identity. Each call increments an internal
-//     counter exposed via JWKSStub.APIKeyVerifyCount().
+//   - POST /v1/verify-api-key  — registry-based check; only pre-registered
+//     keys or keys added via MintAPIKey are accepted. Each call increments
+//     an internal counter exposed via JWKSStub.APIKeyVerifyCount().
 //
 // The stub is hand-rolled — it does NOT import or reuse Passport's
 // real handler code. If Passport's wire format drifts, this stub
@@ -30,20 +37,42 @@ import (
 //   - Addr        — host:port the stub listens on.
 //   - Stop()      — shuts the stub down (idempotent).
 //   - SignJWT(...) — produces a 1-hour token signed by the JWKS key, audience "flow".
+//   - SignExpiredJWT(...) — produces a token whose exp is 1 hour in the past.
+//   - MintAPIKey(...) — registers a new API key identity for use in tests.
 //   - APIKeyVerifyCount() — total /v1/verify-api-key requests since start.
 //     After scheme dispatch, this counter MUST stay zero when only Bearer
 //     (JWT) traffic is sent — the dispatch sends Bearer to the JWT path
 //     only. Tests that send ApiKey-v1 traffic must see the counter advance.
 type JWKSStub struct {
-	Addr       string
-	srv        *http.Server
-	signJWT    func(id, username, displayName, userType string) string
-	apiKeyHits atomic.Int64
+	Addr           string
+	srv            *http.Server
+	signJWT        func(id, username, displayName, userType string) string
+	signExpiredJWT func(id, username, displayName, userType string) string
+	apiKeyHits     atomic.Int64
+	apiKeys        map[string]apiKeyEntry
+	apiKeysMu      sync.Mutex
 }
 
 // SignJWT produces a token signed by the JWKS stub's key, audience "flow".
 func (s *JWKSStub) SignJWT(id, username, displayName, userType string) string {
 	return s.signJWT(id, username, displayName, userType)
+}
+
+// SignExpiredJWT mints a JWT whose `exp` claim is one hour in the
+// past — used by negative-auth tests to confirm the JWT validator
+// honours expiration. Same signature/issuer/audience as SignJWT
+// otherwise, so any failure is attributable to the exp claim alone.
+func (s *JWKSStub) SignExpiredJWT(id, username, displayName, userType string) string {
+	return s.signExpiredJWT(id, username, displayName, userType)
+}
+
+// MintAPIKey registers a new API key and returns the key string.
+// Tests that need a non-default api-key identity call this; tests
+// content with the canned service token use it directly.
+func (s *JWKSStub) MintAPIKey(key, id, username, displayName, userType string) {
+	s.apiKeysMu.Lock()
+	defer s.apiKeysMu.Unlock()
+	s.apiKeys[key] = apiKeyEntry{id: id, username: username, displayName: displayName, userType: userType}
 }
 
 // APIKeyVerifyCount returns the number of /v1/verify-api-key requests
@@ -84,20 +113,13 @@ func StartJWKSStub() *JWKSStub {
 		panic(fmt.Sprintf("jwks_stub: marshal JWKS: %v", err))
 	}
 
-	apiKeyIdentity := map[string]any{
-		"valid": true,
-		"key": map[string]any{
-			"userId": "00000000-0000-0000-0000-000000000099",
-			"metadata": map[string]any{
-				"username":     "flow-e2e-apikey",
-				"name":         "Flow E2E API Key",
-				"display_name": "Flow E2E API Key",
-				"type":         "service",
-			},
-		},
+	stub := &JWKSStub{apiKeys: make(map[string]apiKeyEntry)}
+	stub.apiKeys["harness-service-token"] = apiKeyEntry{
+		id:          "00000000-0000-0000-0000-000000000099",
+		username:    "flow-e2e-apikey",
+		displayName: "Flow E2E API Key",
+		userType:    "service",
 	}
-
-	stub := &JWKSStub{}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/jwks", func(w http.ResponseWriter, r *http.Request) {
@@ -115,16 +137,27 @@ func StartJWKSStub() *JWKSStub {
 			json.NewEncoder(w).Encode(map[string]any{"valid": false, "error": "invalid request"})
 			return
 		}
-		// Distinguish a "bad" key. The literal "INVALID" is rejected;
-		// anything else (including JWT-shaped strings the JWT validator
-		// already rejected) returns the canned identity.
-		if req.Key == "INVALID" {
-			w.Header().Set("Content-Type", "application/json")
+		stub.apiKeysMu.Lock()
+		ent, ok := stub.apiKeys[req.Key]
+		stub.apiKeysMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		if !ok {
+			w.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(w).Encode(map[string]any{"valid": false})
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(apiKeyIdentity)
+		json.NewEncoder(w).Encode(map[string]any{
+			"valid": true,
+			"key": map[string]any{
+				"userId": ent.id,
+				"metadata": map[string]any{
+					"username":     ent.username,
+					"name":         ent.displayName,
+					"display_name": ent.displayName,
+					"type":         ent.userType,
+				},
+			},
+		})
 	})
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -155,6 +188,29 @@ func StartJWKSStub() *JWKSStub {
 		signedBytes, err := jwt.Sign(tok, jwt.WithKey(jwa.RS256, privJWK))
 		if err != nil {
 			panic(fmt.Sprintf("jwks_stub: sign JWT: %v", err))
+		}
+		return string(signedBytes)
+	}
+
+	stub.signExpiredJWT = func(id, username, displayName, userType string) string {
+		past := time.Now().Add(-2 * time.Hour)
+		tok, err := jwt.NewBuilder().
+			Subject(id).
+			Issuer("passport-stub").
+			Audience([]string{"flow"}).
+			IssuedAt(past).
+			Expiration(past.Add(1 * time.Hour)). // exp = 1h ago
+			Claim("username", username).
+			Claim("name", displayName).
+			Claim("display_name", displayName).
+			Claim("type", userType).
+			Build()
+		if err != nil {
+			panic(fmt.Sprintf("jwks_stub: build expired JWT: %v", err))
+		}
+		signedBytes, err := jwt.Sign(tok, jwt.WithKey(jwa.RS256, privJWK))
+		if err != nil {
+			panic(fmt.Sprintf("jwks_stub: sign expired JWT: %v", err))
 		}
 		return string(signedBytes)
 	}
