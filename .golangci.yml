@@ -11,9 +11,9 @@
 #                below still prohibits leaking the concrete type into function
 #                signatures even in test files.
 #
-#   forbidigo  — prevents *sqlite.Store and *postgres.Store from appearing in
+#   forbidigo  — prevents sqlite.Store and postgres.Store from appearing in
 #                any Go source outside internal/infra/. Within infra, the
-#                qualified cross-package form (*sqlite.Store / *postgres.Store)
+#                qualified cross-package form (sqlite.Store / postgres.Store)
 #                is never used — infra methods use the unqualified *Store
 #                receiver, so the pattern has zero false positives inside the
 #                adapters.
@@ -62,7 +62,7 @@ linters:
                 instead.
 
     forbidigo:
-      # Forbid the qualified concrete types *sqlite.Store and *postgres.Store
+      # Forbid the qualified concrete types sqlite.Store and postgres.Store
       # in function signatures. This is the guard that test helpers must return
       # a port interface, not the adapter. The infra packages themselves use
       # unqualified *Store receivers, so these patterns have no false positives
@@ -70,15 +70,21 @@ linters:
       #
       # analyze-types is false (default): pattern matches against source text,
       # not type information. Sufficient for catching type-leaked signatures.
+      #
+      # NOTE: forbidigo matches against identifier text in the AST, not the
+      # full type expression. The * pointer sigil is a separate AST node and
+      # is NOT part of the identifier, so a leading \* in the regex defeats
+      # the rule entirely — it never fires. The patterns below correctly omit
+      # the leading asterisk. (Reference: nexus/.golangci.yml, commit 5978a08.)
       analyze-types: false
       forbid:
-        - pattern: '\*sqlite\.Store'
+        - pattern: 'sqlite\.Store'
           msg: >
             Use a port interface (domain.Store) as the function parameter/return
             type — not the concrete *sqlite.Store.
             See skills/lead/go-service-architecture/references/
             architecture-reference.md §"Test Fixture Return Types".
-        - pattern: '\*postgres\.Store'
+        - pattern: 'postgres\.Store'
           msg: >
             Use a port interface (domain.Store) as the function parameter/return
             type — not the concrete *postgres.Store.
