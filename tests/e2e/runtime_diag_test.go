@@ -13,7 +13,8 @@ func TestRuntime_DiagDrivesStubDriver(t *testing.T) {
 	env := harness.NewEnv(t, harness.WithStubRuntimeEnv())
 	defer env.Cleanup(t)
 
-	c := harness.NewClientNoAuth(env.Daemon.BaseURL())
+	tok := env.Daemon.SignJWT("svc-001", "flow-e2e", "Flow E2E", "service")
+	c := harness.NewClient(env.Daemon.BaseURL(), tok)
 
 	startReq := map[string]any{
 		"project_id":   "flow",
@@ -57,7 +58,8 @@ func TestRuntime_DiagReturns503WithoutStub(t *testing.T) {
 	env := harness.NewEnv(t) // no WithStubRuntimeEnv()
 	defer env.Cleanup(t)
 
-	c := harness.NewClientNoAuth(env.Daemon.BaseURL())
+	tok := env.Daemon.SignJWT("svc-001", "flow-e2e", "Flow E2E", "service")
+	c := harness.NewClient(env.Daemon.BaseURL(), tok)
 	status, _, err := c.PostJSON("/v1/runtime/_diag/start", map[string]any{
 		"project_id": "flow", "work_item_id": "wi", "agent_id": "a", "git_ref": "main",
 	}, nil)

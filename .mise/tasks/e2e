@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
-#MISE description="Run end-to-end tests against a real flow daemon (rebuilds via build:dev)"
-#MISE depends=["build:dev"]
+#MISE description="Run end-to-end tests against a real flow daemon (builds e2e-tagged binary)"
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-export FLOW_BINARY="$REPO_ROOT/build/flow"
+BUILD_DIR="$REPO_ROOT/build"
+export FLOW_BINARY="$BUILD_DIR/flow-e2e"
 
-if [[ ! -x "$FLOW_BINARY" ]]; then
-  echo "FLOW_BINARY not found at $FLOW_BINARY — run 'mise run build:dev' first" >&2
-  exit 1
-fi
+# Build the e2e-tagged binary (includes stub runtime support; distinct from
+# the production binary produced by build:dev).
+mkdir -p "$BUILD_DIR"
+GIT_SHORT_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION="${VERSION:-dev-$GIT_SHORT_SHA}"
+go build -tags e2e \
+  -ldflags "-X github.com/Work-Fort/Flow/cmd.Version=$VERSION" \
+  -o "$FLOW_BINARY" \
+  "$REPO_ROOT"
 
 # --backend sqlite|postgres selects which storage layer the spawned
 # daemon uses. SQLite is the default; CI runs both as parallel jobs.

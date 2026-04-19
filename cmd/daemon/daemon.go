@@ -19,7 +19,6 @@ import (
 	"github.com/Work-Fort/Flow/internal/config"
 	flowDaemon "github.com/Work-Fort/Flow/internal/daemon"
 	"github.com/Work-Fort/Flow/internal/infra"
-	"github.com/Work-Fort/Flow/internal/infra/runtime/stub"
 	"github.com/Work-Fort/Flow/internal/scheduler"
 )
 
@@ -112,9 +111,7 @@ func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhook
 		Health:         health,
 		Store:          store,
 	}
-	if os.Getenv("FLOW_E2E_RUNTIME_STUB") == "1" {
-		serverCfg.Runtime = stub.New()
-	}
+	injectStubRuntime(&serverCfg)
 	srv, sched := flowDaemon.NewServer(serverCfg)
 
 	sigCh := make(chan os.Signal, 1)

@@ -11,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:18
+        image: postgres:17
         env:
           POSTGRES_DB: flow_test
-          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_PASSWORD: flow
         ports:
           - 5432:5432
         options: >-
@@ -28,7 +28,7 @@ jobs:
       - run: mise run lint
       - run: mise run test
         env:
-          FLOW_DB: postgres://postgres@127.0.0.1/flow_test?sslmode=disable
+          FLOW_DB: postgres://postgres:flow@127.0.0.1/flow_test?sslmode=disable
 
   e2e:
     runs-on: ubuntu-latest
@@ -37,10 +37,10 @@ jobs:
         backend: [sqlite, postgres]
     services:
       postgres:
-        image: postgres:18
+        image: postgres:17
         env:
           POSTGRES_DB: flow_test
-          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_PASSWORD: flow
         ports:
           - 5432:5432
         options: >-
@@ -53,4 +53,4 @@ jobs:
       - uses: jdx/mise-action@v3
       - run: mise run e2e --backend ${{ matrix.backend }}
         env:
-          FLOW_E2E_PG_DSN: postgres://postgres@127.0.0.1/flow_test?sslmode=disable
+          FLOW_E2E_PG_DSN: postgres://postgres:flow@127.0.0.1/flow_test?sslmode=disable

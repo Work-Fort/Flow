@@ -16,7 +16,8 @@ func TestAgentPool_AcquireRenewRelease(t *testing.T) {
 
 	env.Hive.SeedPoolAgent("a_e2e_001", "agent-e2e-1", "team-e2e")
 
-	c := harness.NewClientNoAuth(env.Daemon.BaseURL())
+	tok := env.Daemon.SignJWT("svc-001", "flow-e2e", "Flow E2E", "service")
+	c := harness.NewClient(env.Daemon.BaseURL(), tok)
 
 	claimReq := map[string]any{
 		"role": "developer", "project": "flow",

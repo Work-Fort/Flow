@@ -15,7 +15,8 @@ func TestAuditEvents_RecordedThroughDaemon(t *testing.T) {
 
 	env.Hive.SeedPoolAgent("a_audit_001", "agent-audit-1", "team-audit")
 
-	c := harness.NewClientNoAuth(env.Daemon.BaseURL())
+	tok := env.Daemon.SignJWT("svc-001", "flow-e2e", "Flow E2E", "service")
+	c := harness.NewClient(env.Daemon.BaseURL(), tok)
 
 	claimReq := map[string]any{
 		"role": "reviewer", "project": "flow",
