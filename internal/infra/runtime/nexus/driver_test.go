@@ -397,3 +397,36 @@ func TestGetProjectMasterRef_UnknownProjectReturnsZero(t *testing.T) {
 		t.Errorf("unknown project ref = %+v, want zero value", ref)
 	}
 }
+
+func TestNexusName_StripsNonASCIILetters(t *testing.T) {
+	// Non-ASCII letters (é, é from "Café Résumé") must be replaced with
+	// dashes, not passed through. unicode.IsLetter would incorrectly keep
+	// them; the ASCII range check must strip them.
+	got := nexusName("Café Résumé")
+	for _, r := range got {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+			t.Errorf("nexusName(%q) = %q: contains non-[a-z0-9-] rune %q", "Café Résumé", got, r)
+		}
+	}
+	if got == "" {
+		t.Errorf("nexusName(%q) = %q: must not be empty", "Café Résumé", got)
+	}
+	if len(got) > 24 {
+		t.Errorf("nexusName(%q) = %q: len %d exceeds 24", "Café Résumé", got, len(got))
+	}
+}
+
+func TestNexusName_TruncatesByteSafe(t *testing.T) {
+	// A 30-char all-ASCII input must truncate to ≤24 chars without
+	// panicking or corrupting rune boundaries.
+	input := "abcdefghijklmnopqrstuvwxyz1234" // 30 ASCII chars
+	got := nexusName(input)
+	if len(got) > 24 {
+		t.Errorf("nexusName(30-char) = %q: len %d exceeds 24", got, len(got))
+	}
+	for _, r := range got {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+			t.Errorf("nexusName(30-char) = %q: contains non-[a-z0-9-] rune %q", got, r)
+		}
+	}
+}

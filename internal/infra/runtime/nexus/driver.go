@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/Work-Fort/Flow/internal/domain"
 )
@@ -70,14 +69,15 @@ func New(cfg Config) *Driver {
 }
 
 // nexusName converts an arbitrary string into a valid Nexus drive/VM name:
-// only lowercase a-z, 0-9 and dashes; must start and end with a-z0-9;
-// max 24 characters. When the sanitized form would exceed 24 chars, the
-// first 16 sanitized chars are combined with a 7-char hex suffix derived
-// from the full input so that two distinct long names never collide.
+// only ASCII lowercase a-z, 0-9 and dashes; must start and end with a-z0-9;
+// max 24 characters. Non-ASCII input is safe: ToLower is applied first so
+// all kept characters are in [a-z0-9]; everything else becomes a dash.
+// When the sanitised form exceeds 24 chars, a 15-char ASCII prefix is
+// combined with an 8-char SHA-256 hex suffix to preserve uniqueness.
 func nexusName(s string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(s) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
 		} else {
 			b.WriteByte('-')
@@ -88,6 +88,7 @@ func nexusName(s string) string {
 		return out
 	}
 	// Preserve uniqueness via a short hash suffix.
+	// out is all ASCII at this point so byte-slicing is safe.
 	h := sha256.Sum256([]byte(s))
 	suffix := fmt.Sprintf("%x", h[:4]) // 8 hex chars
 	prefix := strings.Trim(out[:15], "-")
