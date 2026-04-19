@@ -199,11 +199,13 @@ project bot would:
    `agent_released` row exists in the audit log.
 10. **Final audit assertion.** Simulator GETs
     `/v1/audit/_diag/by-workflow/wf_round_trip_001` and asserts the
-    event sequence is exactly:
-    `agent_claimed → lease_renewed*+ → combine_merge_received →
-     agent_released`
-    (renew events appear at least once because the daemon's renewer
-    runs at 100 ms via the harness env override).
+    log contains both `agent_claimed` and `agent_released` rows for
+    the workflow. Combine webhook events are deliberately not
+    asserted here — `combine_*_received` events have no
+    `workflow_id`, so the `by-workflow` query cannot see them. The
+    bot-vocabulary plan (next workstream) adds the workflow↔repo
+    correlation that lets a later test assert the merge event;
+    Plan B's contract is the lifecycle subset only.
 
 The test runs against both backends via the existing
 `-backend` flag wired by Plan A.
@@ -310,6 +312,7 @@ read top-to-bottom against a stable wire client.
 **Files:**
 - Create: `tests/e2e/harness/mcp_client.go`
 - Test: `tests/e2e/harness/mcp_client_test.go`
+- Modify: `.golangci.yml` (add `e2e-wire-only` depguard rule)
 
 **Step 1: Write the failing test**
 
@@ -605,7 +608,58 @@ func readMCPResponse(resp *http.Response) ([][]byte, error) {
 Run: `go test ./tests/e2e/harness/ -run TestMCPClient`
 Expected: PASS (3 sub-tests).
 
-**Step 5: Commit**
+**Step 5: Extend depguard to forbid the MCP and WorkFort-client packages in `tests/e2e/...`**
+
+The independence constraint ("harness is hand-rolled, no MCP /
+WorkFort-client imports") is currently enforced only by reviewer
+discipline. The existing `.golangci.yml` defines an `infra-boundary`
+depguard rule that excludes `**/*_test.go`; nothing prevents an MCP
+or client import from sneaking into a test file. Add a second rule
+that targets `tests/e2e/**/*.go` and denies the four package
+prefixes the harness must not import.
+
+Modify `.golangci.yml` to add a new rule under `linters.settings.depguard.rules`:
+
+```yaml
+        # tests/e2e/ must speak raw wire protocols only — no MCP
+        # client, no Sharkfin/Hive/Pylon Go client imports. Drift
+        # between these and the real services must surface as test
+        # failure, not be hidden by a shared client.
+        # See feedback_e2e_harness_independence.md.
+        e2e-wire-only:
+          files:
+            - "**/tests/e2e/**/*.go"
+          list-mode: lax
+          deny:
+            - pkg: github.com/mark3labs/mcp-go
+              desc: >
+                The e2e harness must speak MCP wire protocol directly
+                (JSON-RPC 2.0 over streaming-HTTP). Importing the
+                MCP-go client would hide drift between the client and
+                Flow's mcp-go-backed server.
+            - pkg: github.com/Work-Fort/sharkfin/client/go
+              desc: >
+                The e2e harness must speak Sharkfin's REST surface
+                directly. Importing sharkfinclient would hide drift
+                between the client and Sharkfin's wire format.
+            - pkg: github.com/Work-Fort/Hive/client
+              desc: >
+                The e2e harness must speak Hive's REST surface
+                directly. Importing hiveclient would hide drift
+                between the client and Hive's wire format.
+            - pkg: github.com/Work-Fort/Pylon/client/go
+              desc: >
+                The e2e harness must speak Pylon's REST surface
+                directly. Importing pylonclient would hide drift
+                between the client and Pylon's wire format.
+```
+
+Run: `golangci-lint config verify`
+Expected: schema valid.
+Run: `mise run lint`
+Expected: green (no current code imports any of the four).
+
+**Step 6: Commit**
 
 ```
 test(e2e): add MCP wire client to harness
@@ -616,6 +670,11 @@ JSON, SSE, and 202-Accepted response shapes. Imports no MCP
 library — drift between client and Flow's mcp-go-backed server
 must surface as test failure (per
 feedback_e2e_harness_independence.md).
+
+Extends .golangci.yml with an e2e-wire-only depguard rule that
+forbids mark3labs/mcp-go and the sharkfin/hive/pylon Go clients
+under tests/e2e/, so the constraint is CI-enforced rather than
+reviewer-discipline.
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ```
@@ -644,15 +703,17 @@ package e2e_test
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/Work-Fort/Flow/tests/e2e/harness"
 )
 
-// mcpEnv stands up Env, signs an API-key client, builds an MCPClient,
-// and seeds one workflow template + instance + work item so every
-// MCP tool has something to act on. Returns the IDs the tools need.
+// mcpFixture stands up Env, signs an API-key client, builds an
+// MCPClient, and seeds one workflow template (2 steps, 1 transition)
+// so every MCP tool has something to act on. Per-test instances and
+// work items are created lazily inside each test.
 type mcpFixture struct {
 	env        *harness.Env
 	mcp        *harness.MCPClient
@@ -672,47 +733,47 @@ func setupMCP(t *testing.T) *mcpFixture {
 	tok := env.Daemon.SignJWT("svc-mcp", "flow-mcp", "Flow MCP", "service")
 	c := harness.NewClient(env.Daemon.BaseURL(), tok)
 
-	// Create template with two steps + one transition.
-	tmplBody := map[string]any{
-		"name":        "mcp-tmpl",
-		"description": "tmpl for MCP e2e",
-		"steps": []map[string]any{
-			{"key": "dev", "name": "Dev", "type": "task", "position": 1},
-			{"key": "rev", "name": "Review", "type": "task", "position": 2},
-		},
-		"transitions": []map[string]any{
-			{"key": "dev_to_rev", "name": "Dev to Review",
-				"from_step_key": "dev", "to_step_key": "rev"},
-		},
-	}
+	// Production CreateTemplateInput accepts only {name, description}
+	// (internal/daemon/rest_types.go:73-78). Steps and transitions are
+	// added via PATCH afterwards (mirrors tests/e2e/templates_test.go's
+	// seedThreeStepTemplate at lines 279-309). Step + transition IDs
+	// are client-supplied so the test can reference them without an
+	// extra GET.
+	const (
+		stpDev   = "stp_mcp_dev"
+		stpRev   = "stp_mcp_rev"
+		trnD2R   = "trn_mcp_d2r"
+	)
 	var tmplResp struct {
-		ID    string `json:"id"`
-		Steps []struct {
-			ID, Key string
-		} `json:"steps"`
-		Transitions []struct {
-			ID, Key string
-		} `json:"transitions"`
+		ID string `json:"id"`
 	}
-	if status, body, err := c.PostJSON("/v1/templates", tmplBody, &tmplResp); err != nil || status != 200 {
+	if status, body, err := c.PostJSON("/v1/templates",
+		map[string]any{"name": "mcp-tmpl", "description": "tmpl for MCP e2e"},
+		&tmplResp); err != nil || status != http.StatusCreated {
 		t.Fatalf("create template: status=%d body=%s err=%v", status, body, err)
 	}
-
-	f := &mcpFixture{env: env, templateID: tmplResp.ID}
-	for _, s := range tmplResp.Steps {
-		if s.Key == "dev" {
-			f.devStepID = s.ID
-		}
-		if s.Key == "rev" {
-			f.revStepID = s.ID
-		}
+	patch := map[string]any{
+		"steps": []map[string]any{
+			{"id": stpDev, "key": "dev", "name": "Dev", "type": "task", "position": 1},
+			{"id": stpRev, "key": "rev", "name": "Review", "type": "task", "position": 2},
+		},
+		"transitions": []map[string]any{
+			{"id": trnD2R, "key": "dev_to_rev", "name": "Dev to Review",
+				"from_step_id": stpDev, "to_step_id": stpRev},
+		},
 	}
-	for _, tr := range tmplResp.Transitions {
-		if tr.Key == "dev_to_rev" {
-			f.devToRev = tr.ID
-		}
+	if status, body, err := c.PatchJSON("/v1/templates/"+tmplResp.ID, patch, nil); err != nil ||
+		status != http.StatusOK {
+		t.Fatalf("seed template: status=%d body=%s err=%v", status, body, err)
 	}
 
+	f := &mcpFixture{
+		env:        env,
+		templateID: tmplResp.ID,
+		devStepID:  stpDev,
+		revStepID:  stpRev,
+		devToRev:   trnD2R,
+	}
 	f.mcp = harness.NewMCPClient(env.Daemon.BaseURL()+"/mcp", "harness-service-token")
 	return f
 }
@@ -1194,6 +1255,7 @@ Expected: FAIL with `undefined: daemon.HandleCombineWebhook`.
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -1240,6 +1302,10 @@ type combineMergePayload struct {
 //
 // audit may be nil (e.g. tests / early bring-up); the handler then
 // drops the event and still 204s.
+//
+// AuditEvent.Payload is a json.RawMessage field already declared in
+// internal/domain/types.go:220 — no domain-type changes needed beyond
+// the two new AuditEventType constants added in Step 1.
 func HandleCombineWebhook(audit domain.AuditEventStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		event := r.Header.Get("X-SoftServe-Event")
@@ -1280,33 +1346,19 @@ func HandleCombineWebhook(audit domain.AuditEventStore) http.Handler {
 	})
 }
 
-func recordCombineEvent(ctx interface {
-	Done() <-chan struct{}
-	Err() error
-	Value(any) any
-	Deadline() (deadline interface{ IsZero() bool }, ok bool)
-}, audit domain.AuditEventStore, ty domain.AuditEventType, payload []byte) {
+// recordCombineEvent persists the audit row, swallowing failures with
+// a warning so a bad audit store never blocks the webhook ack. Audit
+// is the secondary concern of this handler; returning the 204 is the
+// primary one.
+func recordCombineEvent(ctx context.Context, audit domain.AuditEventStore, ty domain.AuditEventType, payload json.RawMessage) {
 	if audit == nil {
 		return
 	}
-	// Use the request's context so cancellations propagate.
-	type ctxRequest interface {
-		Done() <-chan struct{}
+	if err := audit.RecordAuditEvent(ctx, &domain.AuditEvent{Type: ty, Payload: payload}); err != nil {
+		log.Warn("combine webhook: audit failed", "type", ty, "err", err)
 	}
-	_ = ctxRequest(ctx)
 }
 ```
-
-> **Implementation note for the developer.** The `recordCombineEvent`
-> shape above is sketched as guidance; the actual implementation MUST
-> use a real `context.Context` parameter — not the inline interface —
-> and call `audit.RecordAuditEvent(ctx, &domain.AuditEvent{Type: ty,
-> Payload: payload})`. The sketch only highlights that the context
-> chain is request-scoped. Replace the sketch with the canonical
-> `func recordCombineEvent(ctx context.Context, audit
-> domain.AuditEventStore, ty domain.AuditEventType, payload
-> json.RawMessage)` signature. Audit failures are logged at warn level,
-> never returned. After implementation, re-run the tests in Step 5.
 
 **Step 5: Run unit test to verify it passes**
 
@@ -1360,12 +1412,17 @@ package e2e_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"testing"
 
 	"github.com/Work-Fort/Flow/tests/e2e/harness"
 )
 
+// Plan A's harness Client doesn't expose a way to set arbitrary
+// headers per request; postCombineE2E builds a raw request to add
+// X-SoftServe-Event. Plan B uses raw http.Client here rather than
+// extending the Client API — single-use, single-test convenience.
 func postCombineE2E(t *testing.T, env *harness.Env, tok, event string, payload any) (int, []byte) {
 	t.Helper()
 	b, _ := json.Marshal(payload)
@@ -1382,15 +1439,9 @@ func postCombineE2E(t *testing.T, env *harness.Env, tok, event string, payload a
 		t.Fatalf("do: %v", err)
 	}
 	defer resp.Body.Close()
-	body := make([]byte, 0)
-	body, _ = readAll(resp.Body, body)
+	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, body
 }
-
-// Plan A's harness Client doesn't expose a way to set arbitrary
-// headers per request; this helper builds a raw request to add
-// X-SoftServe-Event. Plan B uses raw http.Client here rather than
-// extending the Client API — single-use, single-test convenience.
 
 func TestCombineWebhook_PushAndMergeFlowsThroughDaemon(t *testing.T) {
 	env := harness.NewEnv(t)
@@ -1425,32 +1476,7 @@ func TestCombineWebhook_PushAndMergeFlowsThroughDaemon(t *testing.T) {
 		t.Errorf("ignored event status = %d, want 204; body=%s", status, body)
 	}
 }
-
-// readAll is a tiny helper used by postCombineE2E; the e2e package
-// already imports io and ioutil-equivalents elsewhere.
-func readAll(r interface{ Read([]byte) (int, error) }, _ []byte) ([]byte, error) {
-	buf := make([]byte, 0, 1024)
-	tmp := make([]byte, 1024)
-	for {
-		n, err := r.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-		}
-		if err != nil {
-			if err.Error() == "EOF" {
-				return buf, nil
-			}
-			return buf, err
-		}
-	}
-}
 ```
-
-> **Note on the helper.** The `readAll` shim sidesteps adding an
-> `io` import for a single use; if the file already imports `io`
-> elsewhere via the harness, the developer should replace the shim
-> with `io.ReadAll`. Either is acceptable — the assertion is what
-> matters.
 
 **Step 2: Run test against both backends**
 
@@ -1491,7 +1517,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -1530,63 +1555,67 @@ func TestBotLifecycle_RoundTrip(t *testing.T) {
 	const workflowID = "wf_round_trip_001"
 	const repoName = "flow"
 
-	// 1. Seed template + instance + work item via REST.
-	tmplBody := map[string]any{
-		"name": "round-trip", "description": "round trip e2e",
-		"steps": []map[string]any{
-			{"key": "dev", "name": "Dev", "type": "task", "position": 1},
-			{"key": "rev", "name": "Review", "type": "gate", "position": 2,
-				"approval": map[string]any{"mode": "any", "required_approvers": 1}},
-			{"key": "qa", "name": "QA", "type": "task", "position": 3},
-			{"key": "merged", "name": "Merged", "type": "task", "position": 4},
-		},
-		"transitions": []map[string]any{
-			{"key": "dev_to_rev", "name": "to review",
-				"from_step_key": "dev", "to_step_key": "rev"},
-			{"key": "rev_to_qa", "name": "to qa",
-				"from_step_key": "rev", "to_step_key": "qa"},
-			{"key": "qa_to_merged", "name": "to merged",
-				"from_step_key": "qa", "to_step_key": "merged"},
-		},
-	}
+	// 1. Seed template (POST then PATCH; CreateTemplateInput accepts
+	// only name+description per rest_types.go:73-78). Step and
+	// transition IDs are client-supplied. The gate step at `rev`
+	// supplies an empty approver_role_id, matching the convention
+	// in tests/e2e/templates_test.go:293 (the existing approve/reject
+	// tests rely on this exact shape).
+	const (
+		stpDev    = "stp_rt_dev"
+		stpRev    = "stp_rt_rev"
+		stpQA     = "stp_rt_qa"
+		stpMerged = "stp_rt_merged"
+		trnD2R    = "trn_rt_d2r"
+		trnR2Q    = "trn_rt_r2q"
+		trnQ2M    = "trn_rt_q2m"
+	)
 	var tmpl struct {
-		ID          string
-		Steps       []struct{ ID, Key string }
-		Transitions []struct{ ID, Key string }
+		ID string `json:"id"`
 	}
-	if status, body, err := c.PostJSON("/v1/templates", tmplBody, &tmpl); err != nil || status != 200 {
+	if status, body, err := c.PostJSON("/v1/templates",
+		map[string]any{"name": "round-trip", "description": "round trip e2e"},
+		&tmpl); err != nil || status != http.StatusCreated {
 		t.Fatalf("create template: status=%d body=%s err=%v", status, body, err)
 	}
-	stepID := func(k string) string {
-		for _, s := range tmpl.Steps {
-			if s.Key == k {
-				return s.ID
-			}
-		}
-		t.Fatalf("step key %s not found", k)
-		return ""
+	patch := map[string]any{
+		"steps": []map[string]any{
+			{"id": stpDev, "key": "dev", "name": "Dev", "type": "task", "position": 0},
+			{"id": stpRev, "key": "rev", "name": "Review", "type": "gate", "position": 1,
+				"approval": map[string]any{
+					"mode": "any", "required_approvers": 1, "approver_role_id": "",
+				}},
+			{"id": stpQA, "key": "qa", "name": "QA", "type": "task", "position": 2},
+			{"id": stpMerged, "key": "merged", "name": "Merged", "type": "task", "position": 3},
+		},
+		"transitions": []map[string]any{
+			{"id": trnD2R, "key": "dev_to_rev", "name": "to review",
+				"from_step_id": stpDev, "to_step_id": stpRev},
+			{"id": trnR2Q, "key": "rev_to_qa", "name": "to qa",
+				"from_step_id": stpRev, "to_step_id": stpQA},
+			{"id": trnQ2M, "key": "qa_to_merged", "name": "to merged",
+				"from_step_id": stpQA, "to_step_id": stpMerged},
+		},
 	}
-	transID := func(k string) string {
-		for _, tr := range tmpl.Transitions {
-			if tr.Key == k {
-				return tr.ID
-			}
-		}
-		t.Fatalf("transition key %s not found", k)
-		return ""
+	if status, body, err := c.PatchJSON("/v1/templates/"+tmpl.ID, patch, nil); err != nil ||
+		status != http.StatusOK {
+		t.Fatalf("seed template: status=%d body=%s err=%v", status, body, err)
 	}
-	_ = stepID
 
-	var inst struct{ ID string }
+	var inst struct {
+		ID string `json:"id"`
+	}
 	if status, body, err := c.PostJSON("/v1/instances", map[string]any{
 		"template_id": tmpl.ID, "team_id": "team-b", "name": "round-trip",
-	}, &inst); err != nil || status != 200 {
+	}, &inst); err != nil || status != http.StatusCreated {
 		t.Fatalf("create instance: status=%d body=%s err=%v", status, body, err)
 	}
-	var wi struct{ ID string }
+	var wi struct {
+		ID string `json:"id"`
+	}
 	if status, body, err := c.PostJSON("/v1/instances/"+inst.ID+"/items", map[string]any{
 		"title": "round-trip wi",
-	}, &wi); err != nil || status != 200 {
+	}, &wi); err != nil || status != http.StatusCreated {
 		t.Fatalf("create work item: status=%d body=%s err=%v", status, body, err)
 	}
 
@@ -1599,7 +1628,8 @@ func TestBotLifecycle_RoundTrip(t *testing.T) {
 		"role": "developer", "project": "flow",
 		"workflow_id": workflowID, "lease_ttl_seconds": 60,
 	}
-	if status, body, err := c.PostJSON("/v1/scheduler/_diag/claim", claimReq, nil); err != nil || status != 200 {
+	if status, body, err := c.PostJSON("/v1/scheduler/_diag/claim", claimReq, nil); err != nil ||
+		status != http.StatusOK {
 		t.Fatalf("claim: status=%d body=%s err=%v", status, body, err)
 	}
 	if env.Hive.ClaimCalls() != 1 {
@@ -1607,22 +1637,23 @@ func TestBotLifecycle_RoundTrip(t *testing.T) {
 	}
 
 	// 4. Agent runs: dev -> rev -> approve -> qa -> merged.
-	transitionWorkItem(t, c, wi.ID, transID("dev_to_rev"), "agent-bot", "role-dev")
+	transitionWorkItem(t, c, wi.ID, trnD2R, "agent-bot", "role-dev")
 
 	approveReq := map[string]any{
 		"agent_id": "agent-bot", "comment": "lgtm",
 	}
-	if status, body, err := c.PostJSON("/v1/items/"+wi.ID+"/approve", approveReq, nil); err != nil || status != 200 {
+	if status, body, err := c.PostJSON("/v1/items/"+wi.ID+"/approve", approveReq, nil); err != nil ||
+		status != http.StatusOK {
 		t.Fatalf("approve: status=%d body=%s err=%v", status, body, err)
 	}
 
-	transitionWorkItem(t, c, wi.ID, transID("rev_to_qa"), "agent-bot", "role-reviewer")
+	transitionWorkItem(t, c, wi.ID, trnR2Q, "agent-bot", "role-reviewer")
 
 	// 5. Combine merge webhook fires.
 	postCombineMerge(t, env, tok, httpc, repoName, 42, "main", "agent-merge")
 
 	// 6. Final transition + flow_command "mark_done".
-	transitionWorkItem(t, c, wi.ID, transID("qa_to_merged"), "agent-bot", "role-qa")
+	transitionWorkItem(t, c, wi.ID, trnQ2M, "agent-bot", "role-qa")
 	postSharkfinCommand(t, c, "mark_done", wi.ID, "agent-bot")
 
 	// 7. Release the agent.
@@ -1734,12 +1765,7 @@ func transitionWorkItem(t *testing.T, c *harness.Client, wiID, transitionID, act
 		"reason":         "round-trip",
 	}
 	status, body, err := c.PostJSON("/v1/items/"+wiID+"/transition", req, nil)
-	if err != nil || status != 200 {
-		// Show the body for debugging — guard CEL or invariant errors
-		// surface here.
-		if !strings.Contains(string(body), "approval") {
-			t.Fatalf("transition %s: status=%d body=%s err=%v", transitionID, status, body, err)
-		}
+	if err != nil || status != http.StatusOK {
 		t.Fatalf("transition %s: status=%d body=%s err=%v", transitionID, status, body, err)
 	}
 }
