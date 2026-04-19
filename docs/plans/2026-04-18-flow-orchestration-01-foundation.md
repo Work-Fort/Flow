@@ -2,7 +2,7 @@
 type: plan
 step: "1"
 title: "Flow orchestration — scheduler, lease renewer, RuntimeDriver port, audit events"
-status: approved
+status: complete
 assessment_status: complete
 provenance:
   source: roadmap
@@ -12,7 +12,7 @@ dates:
   created: "2026-04-18"
   revised: "2026-04-19"
   approved: "2026-04-19"
-  completed: null
+  completed: "2026-04-19"
 related_plans:
   - "2026-04-18-flow-e2e-harness-01-foundation.md"
 ---
