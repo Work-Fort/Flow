@@ -39,8 +39,9 @@ type LeaseRenewer struct {
 	ttl      time.Duration
 	tick     <-chan time.Time
 
-	idleMu sync.Mutex
-	idleCh chan struct{} // closed-and-replaced after every renewOnce
+	idleMu   sync.Mutex
+	idleCond *sync.Cond
+	ticks    uint64 // number of completed renewOnce calls; monotonic
 }
 
 // NewLeaseRenewer constructs a LeaseRenewer.
@@ -63,8 +64,8 @@ func NewLeaseRenewer(cfg RenewerConfig) *LeaseRenewer {
 		interval: cfg.Interval,
 		ttl:      cfg.LeaseTTL,
 		tick:     cfg.Tick,
-		idleCh:   make(chan struct{}),
 	}
+	r.idleCond = sync.NewCond(&r.idleMu)
 	return r
 }
 
@@ -90,20 +91,22 @@ func (r *LeaseRenewer) Run(ctx context.Context) {
 	}
 }
 
-// WaitIdle blocks until the next renewOnce completes. Used by tests
-// after sending a manual tick to wait for the renewer to drain it.
-// Production code does not call this.
+// WaitIdle blocks until the renewer completes at least one renewOnce
+// after the call begins. Used by tests after sending a manual tick to
+// wait for the renewer to drain it. Production code does not call this.
 func (r *LeaseRenewer) WaitIdle() {
 	r.idleMu.Lock()
-	ch := r.idleCh
-	r.idleMu.Unlock()
-	<-ch
+	defer r.idleMu.Unlock()
+	start := r.ticks
+	for r.ticks == start {
+		r.idleCond.Wait()
+	}
 }
 
 func (r *LeaseRenewer) signalIdle() {
 	r.idleMu.Lock()
-	close(r.idleCh)
-	r.idleCh = make(chan struct{})
+	r.ticks++
+	r.idleCond.Broadcast()
 	r.idleMu.Unlock()
 }
 
