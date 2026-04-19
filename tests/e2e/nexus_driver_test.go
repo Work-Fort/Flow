@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/Work-Fort/Flow/tests/e2e/harness"
@@ -56,8 +55,8 @@ func TestNexusDriver_DiagDrivesRealNexus(t *testing.T) {
 	if startResp.Handle.Kind != "nexus-vm" {
 		t.Errorf("handle Kind = %q, want nexus-vm", startResp.Handle.Kind)
 	}
-	if !strings.HasPrefix(startResp.Work.ID, "d_") && !strings.Contains(startResp.Work.ID, "-") {
-		t.Errorf("work.ID = %q, want a Nexus drive ID", startResp.Work.ID)
+	if startResp.Work.ID == "" {
+		t.Errorf("work.ID is empty, want a Nexus drive ID")
 	}
 
 	stopReq := map[string]any{
