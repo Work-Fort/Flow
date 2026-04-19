@@ -189,6 +189,37 @@ type VolumeRef struct {
 	ID string
 }
 
+// --- audit events ---
+
+type AuditEventType string
+
+const (
+	AuditEventAgentClaimed          AuditEventType = "agent_claimed"
+	AuditEventAgentReleased         AuditEventType = "agent_released"
+	AuditEventLeaseRenewed          AuditEventType = "lease_renewed"
+	AuditEventLeaseExpiredBySweeper AuditEventType = "lease_expired_by_sweeper"
+)
+
+// AuditEvent is a single durable record of an agent-pool lifecycle
+// transition. Flow is the legal audit primary; Sharkfin transcripts are
+// a human-readable derivation.
+//
+// AuditEventLeaseExpiredBySweeper is reserved for a future plan that
+// wires either a Hive-sweeper webhook into Flow or a Flow-startup
+// reconciliation pass. No Step 1 code path produces this type.
+type AuditEvent struct {
+	ID             string
+	OccurredAt     time.Time
+	Type           AuditEventType
+	AgentID        string
+	AgentName      string
+	WorkflowID     string
+	Role           string
+	Project        string
+	LeaseExpiresAt time.Time       // zero-valued when not applicable.
+	Payload        json.RawMessage // free-form context; may be nil.
+}
+
 // RuntimeHandle identifies a running agent runtime instance. The
 // orchestrator retains the handle between StartAgentRuntime and
 // StopAgentRuntime; drivers interpret it themselves.

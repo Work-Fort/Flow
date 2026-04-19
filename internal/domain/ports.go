@@ -44,6 +44,7 @@ type Store interface {
 	InstanceStore
 	WorkItemStore
 	ApprovalStore
+	AuditEventStore
 	Ping(ctx context.Context) error
 	io.Closer
 }
@@ -60,6 +61,22 @@ type ChatProvider interface {
 
 	// JoinChannel joins the named channel.
 	JoinChannel(ctx context.Context, channel string) error
+}
+
+// AuditEventStore persists AuditEvent records. Every scheduler claim,
+// release, and renewal writes one event.
+type AuditEventStore interface {
+	// RecordAuditEvent writes a new event. The store assigns ID and
+	// OccurredAt if either is zero-valued.
+	RecordAuditEvent(ctx context.Context, e *AuditEvent) error
+
+	// ListAuditEventsByWorkflow returns every event for a workflow ID,
+	// oldest first.
+	ListAuditEventsByWorkflow(ctx context.Context, workflowID string) ([]*AuditEvent, error)
+
+	// ListAuditEventsByAgent returns every event for an agent, oldest
+	// first.
+	ListAuditEventsByAgent(ctx context.Context, agentID string) ([]*AuditEvent, error)
 }
 
 // RuntimeDriver abstracts the runtime that actually executes an agent's
