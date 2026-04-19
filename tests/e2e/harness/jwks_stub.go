@@ -199,7 +199,7 @@ func StartJWKSStub() *JWKSStub {
 			Issuer("passport-stub").
 			Audience([]string{"flow"}).
 			IssuedAt(past).
-			Expiration(past.Add(1 * time.Hour)). // exp = 1h ago
+			Expiration(past.Add(1*time.Hour)). // exp = 1h ago
 			Claim("username", username).
 			Claim("name", displayName).
 			Claim("display_name", displayName).
