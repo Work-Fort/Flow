@@ -343,3 +343,57 @@ func TestIsRuntimeAlive_RespectsContextDeadline(t *testing.T) {
 		t.Errorf("IsRuntimeAlive blocked %v, want < 1s when ctx deadline is 50ms", elapsed)
 	}
 }
+
+func TestRefreshProjectMaster_FirstCallCreatesDrive(t *testing.T) {
+	var createCount int
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"POST /v1/drives": func(w http.ResponseWriter, r *http.Request) {
+			createCount++
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintln(w, `{"id":"d_master_flow","name":"project-master-flow","size_bytes":1073741824,"mount_path":"/work","created_at":"2026-04-19T00:00:00.000Z"}`)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	if err := d.RefreshProjectMaster(context.Background(), "flow", "main"); err != nil {
+		t.Fatalf("RefreshProjectMaster: %v", err)
+	}
+	if createCount != 1 {
+		t.Errorf("create called %d times, want 1", createCount)
+	}
+	ref := d.GetProjectMasterRef("flow")
+	if ref.Kind != VolumeKind {
+		t.Errorf("master ref Kind = %q, want %q", ref.Kind, VolumeKind)
+	}
+	if ref.ID != "d_master_flow" {
+		t.Errorf("master ref ID = %q, want d_master_flow", ref.ID)
+	}
+}
+
+func TestRefreshProjectMaster_SecondCallIsNoop(t *testing.T) {
+	var createCount int
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"POST /v1/drives": func(w http.ResponseWriter, r *http.Request) {
+			createCount++
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintln(w, `{"id":"d_master_flow"}`)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	if err := d.RefreshProjectMaster(context.Background(), "flow", "main"); err != nil {
+		t.Fatalf("first refresh: %v", err)
+	}
+	if err := d.RefreshProjectMaster(context.Background(), "flow", "feature-branch"); err != nil {
+		t.Fatalf("second refresh: %v", err)
+	}
+	if createCount != 1 {
+		t.Errorf("create called %d times, want 1 (second call must be no-op until warming lands)", createCount)
+	}
+}
+
+func TestGetProjectMasterRef_UnknownProjectReturnsZero(t *testing.T) {
+	d := New(Config{BaseURL: "http://nope.invalid"})
+	ref := d.GetProjectMasterRef("never-refreshed")
+	if (ref != domain.VolumeRef{}) {
+		t.Errorf("unknown project ref = %+v, want zero value", ref)
+	}
+}

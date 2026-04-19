@@ -222,8 +222,58 @@ func (d *Driver) DeleteVolume(ctx context.Context, v domain.VolumeRef) error {
 	return err
 }
 
-func (d *Driver) RefreshProjectMaster(_ context.Context, _ string, _ string) error {
-	return errors.New("nexus driver: RefreshProjectMaster not yet implemented")
+// RefreshProjectMaster ensures a project master drive exists in
+// Nexus and remembers it for later CloneWorkItemVolume calls.
+//
+// v1 implementation: idempotent first-time create only. The first
+// call POSTs /v1/drives to create a fresh drive named
+// "project-master-{projectID}" and records its Nexus drive ID in
+// the in-process master map. Subsequent calls are no-ops — the
+// gitRef argument is accepted but ignored.
+//
+// The k8s contract is "launch a one-shot Job that mounts the
+// master PVC, runs git pull + warming script, then snapshots the
+// PVC." The Nexus equivalent is "ephemeral VM with master drive
+// attached, run warming script, snapshot the result." Both are
+// non-trivial flows that earn their own plan; v1 of this driver
+// covers the minimum needed for the diagnostic happy path so the
+// rest of the orchestration can be exercised end-to-end.
+//
+// TODO(plan: warming) — actual git-pull + warming-script + master-
+// drive-snapshot logic.
+func (d *Driver) RefreshProjectMaster(ctx context.Context, projectID, _ string) error {
+	d.mu.Lock()
+	if _, ok := d.masters[projectID]; ok {
+		d.mu.Unlock()
+		return nil
+	}
+	d.mu.Unlock()
+
+	body := struct {
+		Name      string `json:"name"`
+		Size      string `json:"size"`
+		MountPath string `json:"mount_path"`
+	}{
+		Name: "project-master-" + projectID,
+		// TODO(plan: warming) — expose a per-project size knob.
+		// 1Gi is enough for the diag happy path and the typical
+		// claude-cli runtime image; the warming flow needs the
+		// real source repo size + a build-output budget, which
+		// implies a per-project Config entry or a Nexus tag query.
+		Size:      "1Gi",
+		MountPath: "/work",
+	}
+	var resp struct {
+		ID string `json:"id"`
+	}
+	if err := d.postJSON(ctx, "/v1/drives", body, &resp); err != nil {
+		return fmt.Errorf("create master drive for %s: %w", projectID, err)
+	}
+
+	d.mu.Lock()
+	d.masters[projectID] = domain.VolumeRef{Kind: VolumeKind, ID: resp.ID}
+	d.mu.Unlock()
+	return nil
 }
 
 func (d *Driver) GetProjectMasterRef(projectID string) domain.VolumeRef {
