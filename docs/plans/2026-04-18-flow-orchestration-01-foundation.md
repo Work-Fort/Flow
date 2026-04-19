@@ -2,8 +2,8 @@
 type: plan
 step: "1"
 title: "Flow orchestration — scheduler, lease renewer, RuntimeDriver port, audit events"
-status: pending
-assessment_status: needed
+status: approved
+assessment_status: complete
 provenance:
   source: roadmap
   issue_id: null
@@ -11,7 +11,7 @@ provenance:
 dates:
   created: "2026-04-18"
   revised: "2026-04-19"
-  approved: null
+  approved: "2026-04-19"
   completed: null
 related_plans:
   - "2026-04-18-flow-e2e-harness-01-foundation.md"
@@ -2362,11 +2362,15 @@ diagnostic endpoint can exercise the interface end-to-end.
 
 **Step 1: Audit no other `NewServer` callers**
 
-Run: `git grep -n "flowDaemon.NewServer\|daemon.NewServer" -- '*.go'`
-Expected: exactly one production caller in `cmd/daemon/daemon.go`,
-and zero test callers (daemon tests use `httptest` against handler
-funcs, not `NewServer`). If the audit surfaces additional callers,
-update them in the same task.
+Run: `git grep -n "flowDaemon.NewServer\|daemon.NewServer\|NewServer(" -- '*.go'`
+Expected: exactly one production caller in `cmd/daemon/daemon.go`;
+zero callers in `tests/e2e/` (notably `tests/e2e/harness/daemon.go`
+and `tests/e2e/harness/daemon_leak_test.go` spawn the daemon as a
+subprocess and do NOT call `NewServer` directly); zero test callers
+in `internal/` (daemon tests use `httptest` against handler funcs).
+If the audit surfaces additional callers, update them in the same
+task. Save the verbatim grep output for the Task 12 commit body
+(see Step 5).
 
 **Step 2: Extend `ServerConfig` with `Runtime` slot**
 
@@ -2428,6 +2432,26 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
     return &http.Server{…}, sch
 }
 ```
+
+**Hard requirement — caller audit before signature change.** Run:
+
+```
+git grep -n "flowDaemon.NewServer\|daemon.NewServer\|NewServer(" -- '*.go'
+```
+
+The expected callers are:
+- `cmd/daemon/daemon.go` — production entrypoint (this task updates it).
+- Zero callers in `tests/e2e/` (the harness spawns the daemon as a
+  subprocess via `exec.Command`; `tests/e2e/harness/daemon.go` and
+  `tests/e2e/harness/daemon_leak_test.go` do NOT call `NewServer`
+  directly — confirm this with the grep).
+- Zero callers in `internal/` (daemon-package tests use `httptest`
+  against handler funcs, not `NewServer`).
+
+Paste the verbatim grep output into the Task 12 commit body so the
+reviewer can verify zero callers were missed. If any unexpected
+caller surfaces, update it in this same task before committing —
+this is a one-task scope, not a follow-up.
 
 **Step 6: Register the `_diag` runtime endpoint**
 
@@ -2613,6 +2637,10 @@ nil in production until a real driver lands; the e2e harness wires
 stub.Driver so the diag endpoint exercises the RuntimeDriver
 interface end-to-end. Viper gains two duration defaults for the
 renewer's tuning knobs.
+
+Caller audit (paste verbatim from Step 1):
+
+<grep output of "git grep -n flowDaemon.NewServer|daemon.NewServer|NewServer(" -- '*.go'>
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 EOF
@@ -2844,13 +2872,38 @@ func WithStubRuntime() DaemonOption {
 }
 ```
 
-And in `StartDaemon`'s env block (after `XDG_*` are set):
+**All harness env-var forwarding lives in one place.** In
+`StartDaemon`, replace the existing `cmd.Env = append(...)` block
+(currently sets `XDG_CONFIG_HOME` and `XDG_STATE_HOME`) with the
+consolidated form below. This is the single edit that wires every
+e2e env var the harness controls — `FLOW_E2E_RUNTIME_STUB`,
+`FLOW_LEASE_RENEWER_INTERVAL`, and `FLOW_LEASE_TTL`. Step 4's
+"forward both via cmd.Env" instruction refers back to this same
+edit; do not introduce a second `cmd.Env = append(...)` site.
 
 ```go
+	cmd.Env = append(os.Environ(),
+		"XDG_CONFIG_HOME="+xdgDir+"/config",
+		"XDG_STATE_HOME="+xdgDir+"/state",
+		// Renewer cadence overrides — viper.BindEnv (added in
+		// internal/config/config.go's InitViper) maps these to
+		// "lease-renewer-interval" / "lease-ttl". Bound to short
+		// values so the agent_pool e2e test observes a renew within
+		// its 2-second poll window without serialising on a 30-second
+		// production tick.
+		"FLOW_LEASE_RENEWER_INTERVAL=100ms",
+		"FLOW_LEASE_TTL=2s",
+	)
 	if cfg.stubRuntime {
 		cmd.Env = append(cmd.Env, "FLOW_E2E_RUNTIME_STUB=1")
 	}
 ```
+
+The lease overrides are unconditional — every spawned daemon under
+the harness uses the short cadence. They have no effect when no
+agent is claimed (the renewer's `ActiveClaims` returns empty and
+no Hive calls land), so always-on is harmless and avoids per-test
+plumbing.
 
 **Step 3: Extend `tests/e2e/harness/env.go` with backend selection
 and pool seeding**
@@ -3037,12 +3090,16 @@ Each takes the relevant fields, calls `sched.AcquireAgent` /
 `sched.ReleaseAgent`, and returns the result. The endpoints are
 gated to no-op when `sched == nil` (return 503).
 
-Concretely, add these registrations to `internal/daemon/server.go`'s
+Concretely, add this registration to `internal/daemon/server.go`'s
 route block right after `registerRuntimeDiagRoutes`:
 
 ```go
-	registerSchedulerDiagRoutes(api, sch)
+	registerSchedulerAndAuditDiagRoutes(api, sch, cfg.Store)
 ```
+
+(The audit-diag handler in Step 5 below shares this registration
+function — one diag file, one register call. The scaffold below
+shows just the scheduler half; Step 5 fills in the audit half.)
 
 And create `internal/daemon/scheduler_diag.go`:
 
@@ -3069,7 +3126,12 @@ var diagClaims = struct {
 	m map[string]*domain.AgentClaim
 }{m: make(map[string]*domain.AgentClaim)}
 
-func registerSchedulerDiagRoutes(api huma.API, sch *scheduler.Scheduler) {
+// registerSchedulerAndAuditDiagRoutes registers the scheduler diag
+// claim/release endpoints and (folded in by Step 5 below) the audit
+// list-by-workflow endpoint. sch may be nil (returns 503 from the
+// scheduler endpoints); audit must NOT be nil — the daemon always
+// has a Store.
+func registerSchedulerAndAuditDiagRoutes(api huma.API, sch *scheduler.Scheduler, audit domain.AuditEventStore) {
 	type claimInput struct {
 		Body struct {
 			Role            string `json:"role"`
@@ -3139,18 +3201,33 @@ func registerSchedulerDiagRoutes(api huma.API, sch *scheduler.Scheduler) {
 }
 ```
 
-Add `viper.BindEnv("lease-renewer-interval", "FLOW_LEASE_RENEWER_INTERVAL")`
-and `viper.BindEnv("lease-ttl", "FLOW_LEASE_TTL")` to
-`internal/config/config.go`'s `InitViper` so the e2e harness can
-override the renewer cadence via env. Then in
-`tests/e2e/harness/daemon.go`, forward both via `cmd.Env`:
+**`viper.BindEnv` calls in `internal/config/config.go`.** Add to
+`InitViper`:
 
 ```go
-	cmd.Env = append(cmd.Env,
-		"FLOW_LEASE_RENEWER_INTERVAL=100ms",
-		"FLOW_LEASE_TTL=2s",
-	)
+	viper.BindEnv("lease-renewer-interval", "FLOW_LEASE_RENEWER_INTERVAL")
+	viper.BindEnv("lease-ttl", "FLOW_LEASE_TTL")
 ```
+
+**Placement matters.** `viper.BindEnv` registers an explicit env-var
+mapping for a key; `viper.AutomaticEnv` (already called in
+`InitViper`) is a wildcard that maps every key to a transformed env
+var. Both pathways resolve to the same lookup result, but explicit
+`BindEnv` calls are still required because
+`lease-renewer-interval` contains hyphens that `AutomaticEnv` does
+not transform to underscores by default. Place the two `BindEnv`
+lines **immediately after** the existing `viper.SetDefault`
+calls for `lease-renewer-interval` / `lease-ttl` (added in Task 12
+Step 8) and **before** `viper.AutomaticEnv()` so the explicit
+mapping is visible at the time `AutomaticEnv` registers its
+fallback. If `BindEnv` runs after `AutomaticEnv`, the AutomaticEnv
+key transformer (which expects underscores, not hyphens) will have
+already cached a different env var name, and `BindEnv` becomes a
+silent no-op.
+
+The harness-side env-var forwarding for `FLOW_LEASE_RENEWER_INTERVAL`
+and `FLOW_LEASE_TTL` lives in the consolidated `cmd.Env = append(...)`
+block in Step 2 above — do NOT add a second forwarding site here.
 
 (The renewer is bounded; even if a test forgets to seed an agent,
 the renewer's `ActiveClaims` returns empty and no calls land.)
@@ -3235,45 +3312,66 @@ func TestAuditEvents_RecordedThroughDaemon(t *testing.T) {
 }
 ```
 
-The `/v1/audit/_diag/by-workflow/{id}` endpoint is registered in
-`internal/daemon/scheduler_diag.go` (extending the same diag file
-since both are scheduler-/audit-side e2e probes):
+The `/v1/audit/_diag/by-workflow/{id}` endpoint is folded into the
+existing `registerSchedulerAndAuditDiagRoutes` function in
+`internal/daemon/scheduler_diag.go` (declared back in Task 12 with
+the `(api, sch, audit)` signature). Add this handler block at the
+end of the function body, after the scheduler release handler:
 
 ```go
-huma.Register(api, huma.Operation{
-	OperationID: "audit-diag-by-workflow",
-	Method:      http.MethodGet,
-	Path:        "/v1/audit/_diag/by-workflow/{id}",
-	Summary:     "Internal: list audit events by workflow ID",
-	Tags:        []string{"Audit/_diag"},
-}, func(ctx context.Context, in *struct {
-	ID string `path:"id"`
-}) (*struct {
-	Body struct {
-		Events []eventResp `json:"events"`
+	// --- audit list endpoint ---
+
+	type eventResp struct {
+		Type     string `json:"type"`
+		AgentID  string `json:"agent_id"`
+		Workflow string `json:"workflow_id"`
 	}
-}, error) {
-	events, err := store.ListAuditEventsByWorkflow(ctx, in.ID)
-	if err != nil {
-		return nil, huma.NewError(http.StatusInternalServerError, err.Error())
+	type listInput struct {
+		ID string `path:"id"`
 	}
-	out := &struct {
+	type listOutput struct {
 		Body struct {
 			Events []eventResp `json:"events"`
 		}
-	}{}
-	for _, e := range events {
-		out.Body.Events = append(out.Body.Events, eventResp{
-			Type: string(e.Type), AgentID: e.AgentID, Workflow: e.WorkflowID,
-		})
 	}
-	return out, nil
-})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "audit-diag-by-workflow",
+		Method:      http.MethodGet,
+		Path:        "/v1/audit/_diag/by-workflow/{id}",
+		Summary:     "Internal: list audit events by workflow ID",
+		Tags:        []string{"Audit/_diag"},
+	}, func(ctx context.Context, in *listInput) (*listOutput, error) {
+		events, err := audit.ListAuditEventsByWorkflow(ctx, in.ID)
+		if err != nil {
+			return nil, huma.NewError(http.StatusInternalServerError, err.Error())
+		}
+		out := &listOutput{}
+		out.Body.Events = make([]eventResp, 0, len(events))
+		for _, e := range events {
+			out.Body.Events = append(out.Body.Events, eventResp{
+				Type:     string(e.Type),
+				AgentID:  e.AgentID,
+				Workflow: e.WorkflowID,
+			})
+		}
+		return out, nil
+	})
 ```
 
-Add `eventResp` and `store` parameter to
-`registerSchedulerDiagRoutes` (renaming the function appropriately,
-e.g. `registerSchedulerAndAuditDiagRoutes`).
+The `eventResp` JSON keys (`type`, `agent_id`, `workflow_id`) match
+what `audit_events_test.go` decodes. `out.Body.Events` is initialized
+to a non-nil empty slice so the JSON encodes as `[]` rather than
+`null` when there are no rows.
+
+The caller-site registration was already added in Task 12:
+
+```go
+	registerSchedulerAndAuditDiagRoutes(api, sch, cfg.Store)
+```
+
+`cfg.Store` is a `domain.Store`, which embeds `AuditEventStore`, so
+the assignment satisfies the parameter type without a cast.
 
 **Step 6: Write the runtime-diag E2E test**
 
