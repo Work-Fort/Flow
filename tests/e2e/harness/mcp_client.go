@@ -58,6 +58,53 @@ func (c *MCPClient) SetSessionID(s string) {
 	c.mu.Unlock()
 }
 
+// Initialize performs the MCP protocol handshake (method:
+// "initialize"). The streamable-HTTP server requires this before any
+// tools/call. It sets the Mcp-Session-Id that subsequent calls carry.
+func (c *MCPClient) Initialize() error {
+	id := c.nextID.Add(1)
+	req := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "e2e-harness", "version": "0.0.1"},
+		},
+	}
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("mcp initialize marshal: %w", err)
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, c.mcpURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("mcp initialize request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "ApiKey-v1 "+c.apiKey)
+
+	resp, err := c.http.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("mcp initialize: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if sid := resp.Header.Get("Mcp-Session-Id"); sid != "" {
+		c.mu.Lock()
+		c.sess = sid
+		c.mu.Unlock()
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("mcp initialize: HTTP %d: %s", resp.StatusCode, raw)
+	}
+	// Drain body; we don't need to parse the capabilities response.
+	io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
 // Call invokes the named MCP tool with the given arguments and
 // returns the first text-content block of the result. If the result
 // is marked isError, returns a non-nil error whose message contains
