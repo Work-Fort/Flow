@@ -29,4 +29,16 @@ var (
 	// the call. Distinct from ErrNotFound so callers can retry transient
 	// infrastructure outages without muddying not-found semantics.
 	ErrRuntimeUnavailable = errors.New("runtime driver unavailable")
+
+	// ErrValidation is returned when an infra adapter receives an
+	// HTTP 400 (or equivalent) from a downstream service — the request
+	// was syntactically/semantically rejected. Used by the Nexus
+	// runtime driver and any future HTTP-backed adapter.
+	ErrValidation = errors.New("validation failed")
+
+	// ErrInvalidState is returned when an infra adapter receives an
+	// HTTP 409 (or equivalent) from a downstream service — the
+	// requested operation is incompatible with the resource's current
+	// state (e.g., trying to clone a drive whose source is attached).
+	ErrInvalidState = errors.New("invalid state")
 )
