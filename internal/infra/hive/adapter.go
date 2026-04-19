@@ -91,6 +91,62 @@ func (a *Adapter) GetAgentRoles(ctx context.Context, agentID string) ([]domain.I
 	return roles, nil
 }
 
+// ClaimAgent implements domain.HiveAgentClient — delegates to the Hive
+// client. Maps hiveclient.ErrConflict to domain.ErrPoolExhausted so the
+// scheduler can retry-vs-surface on a single sentinel.
+//
+// Per-endpoint disambiguation: Hive's /claim only returns 409 on
+// pool-exhausted; /release and /renew only return 409 on workflow-id
+// mismatch (see hive/lead/internal/daemon/rest_huma.go:34-37). This
+// adapter exploits that to map ErrConflict differently per method.
+func (a *Adapter) ClaimAgent(ctx context.Context, role, project, workflowID string, ttlSeconds int) (*domain.HiveAgent, error) {
+	ag, err := a.client.ClaimAgent(ctx, role, project, workflowID, ttlSeconds)
+	if err != nil {
+		if errors.Is(err, hiveclient.ErrConflict) {
+			return nil, domain.ErrPoolExhausted
+		}
+		return nil, fmt.Errorf("hive claim agent: %w", err)
+	}
+	return &domain.HiveAgent{
+		ID:             ag.ID,
+		Name:           ag.Name,
+		LeaseExpiresAt: ag.LeaseExpiresAt,
+	}, nil
+}
+
+// ReleaseAgent implements domain.HiveAgentClient — maps 409 to
+// domain.ErrWorkflowMismatch (the only 409 case at /release).
+func (a *Adapter) ReleaseAgent(ctx context.Context, id, workflowID string) error {
+	if err := a.client.ReleaseAgent(ctx, id, workflowID); err != nil {
+		if errors.Is(err, hiveclient.ErrConflict) {
+			return domain.ErrWorkflowMismatch
+		}
+		if errors.Is(err, hiveclient.ErrNotFound) {
+			return fmt.Errorf("agent %s: %w", id, domain.ErrNotFound)
+		}
+		return fmt.Errorf("hive release agent %s: %w", id, err)
+	}
+	return nil
+}
+
+// RenewAgentLease implements domain.HiveAgentClient.
+func (a *Adapter) RenewAgentLease(ctx context.Context, id, workflowID string, ttlSeconds int) error {
+	if err := a.client.RenewAgentLease(ctx, id, workflowID, ttlSeconds); err != nil {
+		if errors.Is(err, hiveclient.ErrConflict) {
+			return domain.ErrWorkflowMismatch
+		}
+		if errors.Is(err, hiveclient.ErrNotFound) {
+			return fmt.Errorf("agent %s: %w", id, domain.ErrNotFound)
+		}
+		return fmt.Errorf("hive renew lease %s: %w", id, err)
+	}
+	return nil
+}
+
+// Compile-time assertions.
+var _ domain.IdentityProvider = (*Adapter)(nil)
+var _ domain.HiveAgentClient = (*Adapter)(nil)
+
 // mapHiveError converts a Hive client error to a domain error where the
 // mapping is well-defined (404 → ErrNotFound). Other errors pass through
 // wrapped with context.
