@@ -26,6 +26,7 @@ type daemonCfg struct {
 	webhookBaseURL string
 	dbDSN          string
 	stubRuntime    bool
+	nexusURL       string
 }
 
 type DaemonOption func(*daemonCfg)
@@ -40,6 +41,13 @@ func WithDB(dsn string) DaemonOption {
 
 func WithStubRuntime() DaemonOption {
 	return func(c *daemonCfg) { c.stubRuntime = true }
+}
+
+// withNexusDaemonURL wires the Flow daemon's --nexus-url flag so the
+// production NexusDriver activates and binds /v1/runtime/_diag/*.
+// Used internally by env.go's WithNexusURL EnvOption.
+func withNexusDaemonURL(u string) DaemonOption {
+	return func(c *daemonCfg) { c.nexusURL = u }
 }
 
 // Daemon represents a spawned flow daemon subprocess.
@@ -95,6 +103,9 @@ func StartDaemon(
 	}
 	if cfg.webhookBaseURL != "" {
 		args = append(args, "--webhook-base-url", cfg.webhookBaseURL)
+	}
+	if cfg.nexusURL != "" {
+		args = append(args, "--nexus-url", cfg.nexusURL)
 	}
 
 	dsn := cfg.dbDSN

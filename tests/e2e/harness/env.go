@@ -12,6 +12,7 @@ type EnvOption func(*envCfg)
 type envCfg struct {
 	backend     string // "sqlite" (default) or "postgres"
 	stubRuntime bool
+	nexusURL    string
 }
 
 // WithBackend selects the daemon's storage backend.
@@ -22,6 +23,13 @@ func WithBackend(b string) EnvOption {
 // WithStubRuntimeEnv injects stub.Driver as the daemon's RuntimeDriver.
 func WithStubRuntimeEnv() EnvOption {
 	return func(c *envCfg) { c.stubRuntime = true }
+}
+
+// WithNexusURL wires the Flow daemon's --nexus-url flag so the
+// production NexusDriver activates and binds /v1/runtime/_diag/*.
+// Use with StartNexusDaemon to bring up a real Nexus first.
+func WithNexusURL(url string) EnvOption {
+	return func(c *envCfg) { c.nexusURL = url }
 }
 
 var defaultBackend = "sqlite"
@@ -92,6 +100,9 @@ func NewEnv(t testing.TB, opts ...EnvOption) *Env {
 	var daemonOpts []DaemonOption
 	if cfg.stubRuntime {
 		daemonOpts = append(daemonOpts, WithStubRuntime())
+	}
+	if cfg.nexusURL != "" {
+		daemonOpts = append(daemonOpts, withNexusDaemonURL(cfg.nexusURL))
 	}
 	if cfg.backend == "postgres" {
 		dsn := os.Getenv("FLOW_E2E_PG_DSN")
