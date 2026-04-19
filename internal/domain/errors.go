@@ -13,4 +13,20 @@ var (
 	ErrNotAtGateStep        = errors.New("work item is not at a gate step")
 	ErrGateRequiresApproval = errors.New("gate step requires approval")
 	ErrPermissionDenied     = errors.New("permission denied")
+
+	// ErrPoolExhausted is returned from Scheduler.AcquireAgent when Hive has
+	// no free agent after all retries. The caller should surface this to
+	// the workflow engine, which will retry later or mark the step blocked.
+	ErrPoolExhausted = errors.New("agent pool exhausted")
+
+	// ErrWorkflowMismatch is returned when Flow tries to release or renew
+	// a lease with a workflow ID that does not match the one currently
+	// held in Hive. This is almost always a bug in the caller.
+	ErrWorkflowMismatch = errors.New("workflow id does not match current claim")
+
+	// ErrRuntimeUnavailable is returned from RuntimeDriver operations when
+	// the underlying runtime (Nexus, k8s, …) is unreachable or rejected
+	// the call. Distinct from ErrNotFound so callers can retry transient
+	// infrastructure outages without muddying not-found semantics.
+	ErrRuntimeUnavailable = errors.New("runtime driver unavailable")
 )
