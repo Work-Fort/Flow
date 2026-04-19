@@ -19,3 +19,10 @@ func injectStubRuntime(cfg *flowDaemon.ServerConfig) {
 		cfg.Runtime = stub.New()
 	}
 }
+
+// injectNexusRuntime is a no-op in e2e builds — the stub injector
+// above is the only writer of cfg.Runtime when the e2e tag is set.
+// E2E tests that need a real Nexus driver build without the e2e
+// tag (or use the dedicated nexus_driver_test.go scenarios that
+// drive the production binary).
+func injectNexusRuntime(_ *flowDaemon.ServerConfig, _, _ string) {}

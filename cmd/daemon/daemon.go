@@ -31,6 +31,7 @@ func NewCmd() *cobra.Command {
 	var serviceToken string
 	var pylonURL string
 	var webhookBaseURL string
+	var nexusURL string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -57,11 +58,14 @@ func NewCmd() *cobra.Command {
 			if !cmd.Flags().Changed("webhook-base-url") {
 				webhookBaseURL = viper.GetString("webhook-base-url")
 			}
+			if !cmd.Flags().Changed("nexus-url") {
+				nexusURL = viper.GetString("nexus-url")
+			}
 
 			hiveSvcName := viper.GetString("pylon.services.hive")
 			sharkfinSvcName := viper.GetString("pylon.services.sharkfin")
 
-			return run(bind, port, db, passportURL, serviceToken, pylonURL, webhookBaseURL, hiveSvcName, sharkfinSvcName)
+			return run(bind, port, db, passportURL, serviceToken, pylonURL, webhookBaseURL, nexusURL, hiveSvcName, sharkfinSvcName)
 		},
 	}
 
@@ -72,11 +76,12 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&serviceToken, "service-token", "", "Service identity token (Passport API key)")
 	cmd.Flags().StringVar(&pylonURL, "pylon-url", "", "Pylon service registry URL")
 	cmd.Flags().StringVar(&webhookBaseURL, "webhook-base-url", "", "Flow's externally reachable base URL for webhook callbacks")
+	cmd.Flags().StringVar(&nexusURL, "nexus-url", "", "Nexus daemon REST URL (enables RuntimeDriver in production builds)")
 
 	return cmd
 }
 
-func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhookBaseURL, hiveSvcName, sharkfinSvcName string) error {
+func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhookBaseURL, nexusURL, hiveSvcName, sharkfinSvcName string) error {
 	health := flowDaemon.NewHealthService()
 
 	dsn := db
@@ -112,6 +117,11 @@ func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhook
 		Store:          store,
 	}
 	injectStubRuntime(&serverCfg)
+	// Nexus driver is the production default; injectNexusRuntime is a
+	// no-op under //go:build e2e so the env-gated stub above still wins
+	// in e2e builds. serviceToken doubles as the Bearer credential the
+	// driver attaches on every Nexus REST call.
+	injectNexusRuntime(&serverCfg, nexusURL, serviceToken)
 	srv, sched := flowDaemon.NewServer(serverCfg)
 
 	sigCh := make(chan os.Signal, 1)
