@@ -4,6 +4,7 @@ package nexus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -79,12 +80,47 @@ func (d *Driver) IsRuntimeAlive(_ context.Context, _ domain.RuntimeHandle) (bool
 	return false, errors.New("nexus driver: IsRuntimeAlive not yet implemented")
 }
 
-func (d *Driver) CloneWorkItemVolume(_ context.Context, _ domain.VolumeRef, _ string) (domain.VolumeRef, error) {
-	return domain.VolumeRef{}, errors.New("nexus driver: CloneWorkItemVolume not yet implemented")
+// CloneWorkItemVolume issues POST /v1/drives/clone with a CSI-shaped
+// body. Mount path is intentionally OMITTED from the request: per
+// Nexus's clone endpoint contract, an unset mount_path inherits the
+// source drive's mount_path (which the project master already has
+// set). Flow does not need to assert a per-work-item mount path.
+func (d *Driver) CloneWorkItemVolume(ctx context.Context, master domain.VolumeRef, workItemID string) (domain.VolumeRef, error) {
+	if master.Kind != VolumeKind {
+		return domain.VolumeRef{}, fmt.Errorf("master.Kind=%q: %w", master.Kind, ErrUnsupportedKind)
+	}
+	body := struct {
+		SourceVolumeRef string `json:"source_volume_ref"`
+		Name            string `json:"name"`
+	}{
+		SourceVolumeRef: master.ID,
+		Name:            "work-item-" + workItemID,
+	}
+	var resp struct {
+		ID string `json:"id"`
+	}
+	if err := d.postJSON(ctx, "/v1/drives/clone", body, &resp); err != nil {
+		return domain.VolumeRef{}, err
+	}
+	return domain.VolumeRef{Kind: VolumeKind, ID: resp.ID}, nil
 }
 
-func (d *Driver) DeleteVolume(_ context.Context, _ domain.VolumeRef) error {
-	return errors.New("nexus driver: DeleteVolume not yet implemented")
+// DeleteVolume issues DELETE /v1/drives/{id}. Idempotent: a 404
+// response is reported as success so cleanup paths can be
+// unconditional. A zero-value VolumeRef (orchestrator aborted before
+// clone) is also a no-op.
+func (d *Driver) DeleteVolume(ctx context.Context, v domain.VolumeRef) error {
+	if v.Kind == "" && v.ID == "" {
+		return nil
+	}
+	if v.Kind != VolumeKind {
+		return fmt.Errorf("v.Kind=%q: %w", v.Kind, ErrUnsupportedKind)
+	}
+	err := d.delete(ctx, "/v1/drives/"+v.ID)
+	if err != nil && errors.Is(err, domain.ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (d *Driver) RefreshProjectMaster(_ context.Context, _ string, _ string) error {
