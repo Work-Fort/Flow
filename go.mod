@@ -3,7 +3,7 @@ module github.com/Work-Fort/Flow
 go 1.26
 
 require (
-	github.com/Work-Fort/Passport/go/service-auth v0.0.2
+	github.com/Work-Fort/Passport/go/service-auth v0.1.0
 	github.com/charmbracelet/log v1.0.0
 	github.com/danielgtaylor/huma/v2 v2.37.3
 	github.com/google/cel-go v0.27.0
@@ -25,9 +25,9 @@ require (
 
 require (
 	cel.dev/expr v0.25.1 // indirect
-	github.com/Work-Fort/Hive/client v0.1.0
-	github.com/Work-Fort/Pylon/client/go v0.0.1
-	github.com/Work-Fort/sharkfin/client/go v0.2.0
+	github.com/Work-Fort/Hive/client v0.3.0
+	github.com/Work-Fort/Pylon/client/go v0.1.0
+	github.com/Work-Fort/sharkfin/client/go v0.3.0
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
