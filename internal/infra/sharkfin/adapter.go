@@ -24,11 +24,11 @@ type Adapter struct {
 }
 
 // New constructs an Adapter. baseURL is the HTTP base URL returned by
-// Pylon (e.g., "http://sharkfin:16000"). token is a Passport JWT or
-// API key. No network I/O happens at construction time.
-func New(baseURL, token string) *Adapter {
+// Pylon (e.g., "http://sharkfin:16000"). serviceToken is a Passport API key
+// (wf-svc_* format). No network I/O happens at construction time.
+func New(baseURL, serviceToken string) *Adapter {
 	return &Adapter{
-		client: sharkfinclient.NewRESTClient(baseURL, sharkfinclient.WithToken(token)),
+		client: sharkfinclient.NewRESTClient(baseURL, sharkfinclient.WithAPIKey(serviceToken)),
 	}
 }
 
