@@ -16,25 +16,43 @@ import (
 // is wire-only. If you reach for sharkfinclient or hiveclient here,
 // stop and add the request inline instead.
 //
-// Auth model: Passport's middleware reads `Authorization: Bearer <token>`
-// only — there is no separate API-key header. The validator chain
-// internally tries JWT first and falls back to API-key validation
-// against the same Bearer token. So both JWTs and API keys ride the
-// same wire; tests pick the constructor that documents intent.
+// Auth model (post-Passport-scheme-split). Passport's middleware now
+// dispatches by Authorization scheme:
+//   - "Bearer <jwt>"      → JWT validator only
+//   - "ApiKey-v1 <key>"   → API-key validator only
+//   - any other scheme    → 401 (no fallthrough)
+//
+// Pick the constructor that documents intent:
+//   - NewClient(baseURL, jwt)        → Authorization: Bearer <jwt>
+//   - NewClientAPIKey(baseURL, key)  → Authorization: ApiKey-v1 <key>
+//   - NewClientNoAuth(baseURL)       → no Authorization header
+//   - NewClientRawAuth(baseURL, raw) → Authorization: <raw>, exact bytes
+//     (use for negative tests that need malformed/garbage headers)
 type Client struct {
-	baseURL string
-	token   string // empty means: send no Authorization header
-	http    *http.Client
+	baseURL    string
+	authHeader string // empty means: send no Authorization header
+	http       *http.Client
 }
 
 // NewClient returns a Client that sends `Authorization: Bearer <token>`.
-// Use it for both JWTs and API keys — Passport's validator chain
-// distinguishes them server-side.
-func NewClient(baseURL, token string) *Client {
+// Use it only for JWTs — API keys must use NewClientAPIKey or the
+// daemon's scheme dispatch will reject them with 401.
+func NewClient(baseURL, jwt string) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		token:   token,
-		http:    &http.Client{Timeout: 10 * time.Second},
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		authHeader: "Bearer " + jwt,
+		http:       &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+// NewClientAPIKey returns a Client that sends `Authorization: ApiKey-v1 <key>`.
+// Required for API-key auth after the Passport scheme-split — sending
+// an API key under "Bearer" is rejected as a Cluster-3b regression.
+func NewClientAPIKey(baseURL, apiKey string) *Client {
+	return &Client{
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		authHeader: "ApiKey-v1 " + apiKey,
+		http:       &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -43,6 +61,18 @@ func NewClientNoAuth(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		http:    &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+// NewClientRawAuth returns a Client that sends the given string verbatim
+// as the Authorization header value. Use only for negative tests
+// (malformed scheme, missing space, garbage). Production-style auth
+// MUST use NewClient or NewClientAPIKey.
+func NewClientRawAuth(baseURL, rawAuth string) *Client {
+	return &Client{
+		baseURL:    strings.TrimRight(baseURL, "/"),
+		authHeader: rawAuth,
+		http:       &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -63,8 +93,8 @@ func (c *Client) authedRequest(method, path string, body any) (*http.Request, er
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.authHeader != "" {
+		req.Header.Set("Authorization", c.authHeader)
 	}
 	return req, nil
 }
