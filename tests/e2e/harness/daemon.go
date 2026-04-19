@@ -25,6 +25,7 @@ type daemonCfg struct {
 	passportAddr   string
 	webhookBaseURL string
 	dbDSN          string
+	stubRuntime    bool
 }
 
 type DaemonOption func(*daemonCfg)
@@ -35,6 +36,10 @@ func WithWebhookBaseURL(u string) DaemonOption {
 
 func WithDB(dsn string) DaemonOption {
 	return func(c *daemonCfg) { c.dbDSN = dsn }
+}
+
+func WithStubRuntime() DaemonOption {
+	return func(c *daemonCfg) { c.stubRuntime = true }
 }
 
 // Daemon represents a spawned flow daemon subprocess.
@@ -116,7 +121,14 @@ func StartDaemon(
 	cmd.Env = append(os.Environ(),
 		"XDG_CONFIG_HOME="+xdgDir+"/config",
 		"XDG_STATE_HOME="+xdgDir+"/state",
+		// Renewer cadence overrides so the agent_pool e2e test observes
+		// a renew within its 2-second poll window.
+		"FLOW_LEASE_RENEWER_INTERVAL=100ms",
+		"FLOW_LEASE_TTL=2s",
 	)
+	if cfg.stubRuntime {
+		cmd.Env = append(cmd.Env, "FLOW_E2E_RUNTIME_STUB=1")
+	}
 	// *os.File (not io.Writer) so exec.Cmd does not create a copy
 	// goroutine; Setpgid puts the daemon and any descendants in a
 	// fresh process group; WaitDelay force-closes any inherited fds

@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+// EnvOption configures harness.NewEnv.
+type EnvOption func(*envCfg)
+
+type envCfg struct {
+	backend     string // "sqlite" (default) or "postgres"
+	stubRuntime bool
+}
+
+// WithBackend selects the daemon's storage backend.
+func WithBackend(b string) EnvOption {
+	return func(c *envCfg) { c.backend = b }
+}
+
+// WithStubRuntimeEnv injects stub.Driver as the daemon's RuntimeDriver.
+func WithStubRuntimeEnv() EnvOption {
+	return func(c *envCfg) { c.stubRuntime = true }
+}
+
+var defaultBackend = "sqlite"
+
+// SetDefaultBackend overrides the backend used when NewEnv is called
+// without WithBackend. Wired from main_test.go's -backend flag.
+func SetDefaultBackend(b string) { defaultBackend = b }
+
 // Env is the all-in-one harness construction. Each test's setup looks like:
 //
 //	env := harness.NewEnv(t)
@@ -38,8 +62,13 @@ type Env struct {
 // to keep multiple daemons consistent against. If suite latency becomes a
 // problem, batch related assertions into a single test rather than
 // parallelizing.
-func NewEnv(t testing.TB) *Env {
+func NewEnv(t testing.TB, opts ...EnvOption) *Env {
 	t.Helper()
+
+	cfg := &envCfg{backend: defaultBackend}
+	for _, o := range opts {
+		o(cfg)
+	}
 
 	binary := os.Getenv("FLOW_BINARY")
 	if binary == "" {
@@ -60,7 +89,19 @@ func NewEnv(t testing.TB) *Env {
 	}
 	pylonAddr, stopPylon := StartPylonStub(pylonServices)
 
-	d, err := StartDaemon(t, binary, pylonAddr, jwks.Addr, jwks.SignJWT)
+	var daemonOpts []DaemonOption
+	if cfg.stubRuntime {
+		daemonOpts = append(daemonOpts, WithStubRuntime())
+	}
+	if cfg.backend == "postgres" {
+		dsn := os.Getenv("FLOW_E2E_PG_DSN")
+		if dsn == "" {
+			dsn = "postgres://postgres@127.0.0.1/flow_test?sslmode=disable"
+		}
+		daemonOpts = append(daemonOpts, WithDB(dsn))
+	}
+
+	d, err := StartDaemon(t, binary, pylonAddr, jwks.Addr, jwks.SignJWT, daemonOpts...)
 	if err != nil {
 		stopSharkfin()
 		stopHive()
