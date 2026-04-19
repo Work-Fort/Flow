@@ -123,6 +123,9 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	// Sharkfin webhook receiver.
 	mux.Handle("POST /v1/webhooks/sharkfin", HandleSharkfinWebhook(nil))
 
+	// Combine webhook receiver.
+	mux.Handle("POST /v1/webhooks/combine", HandleCombineWebhook(cfg.Store))
+
 	// MCP server — raw handler (JSON-RPC 2.0, not REST)
 	mcpHandler := NewMCPHandler(MCPDeps{
 		Store: cfg.Store,

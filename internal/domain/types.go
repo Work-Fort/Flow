@@ -198,6 +198,8 @@ const (
 	AuditEventAgentReleased         AuditEventType = "agent_released"
 	AuditEventLeaseRenewed          AuditEventType = "lease_renewed"
 	AuditEventLeaseExpiredBySweeper AuditEventType = "lease_expired_by_sweeper"
+	AuditEventCombinePushReceived   AuditEventType = "combine_push_received"
+	AuditEventCombineMergeReceived  AuditEventType = "combine_merge_received"
 )
 
 // AuditEvent is a single durable record of an agent-pool lifecycle
