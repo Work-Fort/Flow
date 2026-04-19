@@ -111,7 +111,10 @@ func NewServer(cfg ServerConfig) *http.Server {
 	})
 	mux.Handle("/mcp", mcpHandler)
 
-	// Passport auth middleware — validates JWT and API key tokens.
+	// Passport auth middleware — routes Bearer JWTs to the JWT validator and
+	// ApiKey-v1 tokens to the API-key validator. NewSchemeDispatch requires both
+	// validators non-nil; if JWKS init fails at startup (logged below) we
+	// substitute the upstream AlwaysFail stub so the API-key path keeps working.
 	var handler http.Handler
 	if cfg.PassportURL != "" {
 		opts := auth.DefaultOptions(cfg.PassportURL)
@@ -120,13 +123,21 @@ func NewServer(cfg ServerConfig) *http.Server {
 			log.Warn("jwt validator init failed, falling back to API key only", "err", err)
 		}
 
-		var validators []auth.Validator
-		if jwtV != nil {
-			validators = append(validators, jwtV)
-		}
-		validators = append(validators, apikey.New(opts.VerifyAPIKeyURL, opts.APIKeyCacheTTL))
+		apiKeyV := apikey.New(opts.VerifyAPIKeyURL, opts.APIKeyCacheTTL)
 
-		passportMW := auth.NewFromValidators(validators...)
+		// NewSchemeDispatch requires both validators non-nil. If JWKS init
+		// failed at startup (logged a warning above and left jwtV == nil),
+		// substitute the fail-closed stub exported by service-auth so the
+		// API-key path keeps working. Use the upstream helper rather than
+		// reimplementing it locally — single source of truth.
+		var jwtForDispatch auth.Validator
+		if jwtV != nil {
+			jwtForDispatch = jwtV
+		} else {
+			jwtForDispatch = auth.AlwaysFail(fmt.Errorf("jwt validator unavailable (jwks init failed)"))
+		}
+
+		passportMW := auth.NewSchemeDispatch(jwtForDispatch, apiKeyV)
 		handler = publicPathSkip(passportMW(mux), mux)
 	} else {
 		handler = mux
