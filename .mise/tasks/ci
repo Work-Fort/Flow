@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
-#MISE description="Run all CI checks"
-#MISE depends=["lint", "test"]
+#MISE description="Run all CI checks (single-backend; CI workflow runs the matrix)"
+#MISE depends=["lint", "test", "e2e"]
 set -euo pipefail

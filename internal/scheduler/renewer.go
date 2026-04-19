@@ -21,7 +21,7 @@ type RenewerConfig struct {
 	Hive      domain.HiveAgentClient // required
 	Interval  time.Duration          // default 30s; ignored when Tick != nil
 	LeaseTTL  time.Duration          // default 2m
-	Tick      <-chan time.Time        // optional, for tests
+	Tick      <-chan time.Time       // optional, for tests
 }
 
 const (

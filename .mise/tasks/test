@@ -1,9 +1,28 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
-#MISE description="Run tests with coverage"
+#MISE description="Run tests with coverage (PG path mandatory; fails loudly when unreachable)"
 set -euo pipefail
 
 BUILD_DIR=build
 mkdir -p "$BUILD_DIR"
+
+# Default the PG DSN to the local host's Postgres (peer-trust as the
+# postgres user, per WorkFort dev convention). CI overrides FLOW_DB
+# before invocation. Per feedback_no_test_failures.md, silent skip on
+# missing PG is forbidden — if PG is unreachable, the test runner must
+# fail loudly with a clear "start PG" message instead of pretending to
+# pass.
+if [[ -z "${FLOW_DB:-}" ]]; then
+  export FLOW_DB="postgres://postgres@127.0.0.1/flow_test?sslmode=disable"
+fi
+
+# Probe PG reachability before launching the suite so the failure
+# message is "PG not reachable" rather than a wall of skipped tests.
+if ! psql "$FLOW_DB" -c 'SELECT 1' >/dev/null 2>&1; then
+  echo "ERROR: FLOW_DB ($FLOW_DB) not reachable." >&2
+  echo "Start local Postgres or set FLOW_DB to a reachable DSN." >&2
+  echo "Per feedback_no_test_failures.md: silent skips on missing PG are forbidden." >&2
+  exit 1
+fi
 
 go test -v -race -coverprofile="$BUILD_DIR/coverage.out" ./...

@@ -19,7 +19,7 @@ func dsn(t *testing.T) string {
 	t.Helper()
 	v := os.Getenv("FLOW_DB")
 	if v == "" {
-		t.Skip("FLOW_DB not set — skipping PostgreSQL tests")
+		t.Fatal("FLOW_DB not set — the mise test runner sets a default; if you're running `go test` directly, set FLOW_DB=postgres://postgres@127.0.0.1/flow_test?sslmode=disable")
 	}
 	return v
 }

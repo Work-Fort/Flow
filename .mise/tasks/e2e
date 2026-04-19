@@ -12,5 +12,43 @@ if [[ ! -x "$FLOW_BINARY" ]]; then
   exit 1
 fi
 
+# --backend sqlite|postgres selects which storage layer the spawned
+# daemon uses. SQLite is the default; CI runs both as parallel jobs.
+BACKEND=sqlite
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --backend)
+      BACKEND="$2"
+      shift 2
+      ;;
+    --backend=*)
+      BACKEND="${1#*=}"
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+case "$BACKEND" in
+  sqlite)
+    unset FLOW_E2E_PG_DSN
+    ;;
+  postgres)
+    if [[ -z "${FLOW_E2E_PG_DSN:-}" ]]; then
+      export FLOW_E2E_PG_DSN="postgres://postgres@127.0.0.1/flow_test?sslmode=disable"
+    fi
+    if ! psql "$FLOW_E2E_PG_DSN" -c 'SELECT 1' >/dev/null 2>&1; then
+      echo "ERROR: FLOW_E2E_PG_DSN ($FLOW_E2E_PG_DSN) not reachable for postgres e2e backend." >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "unknown --backend: $BACKEND (want sqlite or postgres)" >&2
+    exit 2
+    ;;
+esac
+
 cd "$REPO_ROOT/tests/e2e"
-exec go test -race -count=1 ./...
+exec go test -race -count=1 -backend "$BACKEND" "$@" ./...
