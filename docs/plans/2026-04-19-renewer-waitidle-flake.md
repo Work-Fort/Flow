@@ -2,7 +2,7 @@
 type: plan
 step: "fix"
 title: "Fix LeaseRenewer.WaitIdle race causing CI hang"
-status: approved
+status: complete
 assessment_status: complete
 provenance:
   source: issue
@@ -11,7 +11,7 @@ provenance:
 dates:
   created: "2026-04-19"
   approved: "2026-04-19"
-  completed: null
+  completed: "2026-04-19"
 related_plans:
   - "2026-04-18-flow-orchestration-01-foundation.md"
 ---
