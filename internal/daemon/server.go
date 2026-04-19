@@ -22,6 +22,7 @@ import (
 	"github.com/Work-Fort/Flow/internal/domain"
 	hiveinfra "github.com/Work-Fort/Flow/internal/infra/hive"
 	sharkfininfra "github.com/Work-Fort/Flow/internal/infra/sharkfin"
+	"github.com/Work-Fort/Flow/internal/scheduler"
 	"github.com/Work-Fort/Flow/internal/workflow"
 )
 
@@ -44,10 +45,14 @@ type ServerConfig struct {
 	WebhookBaseURL string
 	Health         *HealthService
 	Store          domain.Store
+	// Runtime is the runtime driver bound to /v1/runtime/_diag/*. nil
+	// in production until a real driver lands; the e2e harness injects
+	// stub.Driver so the diag endpoint exercises the interface.
+	Runtime domain.RuntimeDriver
 }
 
 // NewServer creates and configures the HTTP server.
-func NewServer(cfg ServerConfig) *http.Server {
+func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	mux := http.NewServeMux()
 
 	// Huma API — registers /openapi and /docs automatically on the mux.
@@ -55,6 +60,7 @@ func NewServer(cfg ServerConfig) *http.Server {
 	api := humago.New(mux, config)
 
 	var identityProvider domain.IdentityProvider
+	var hiveAgentClient domain.HiveAgentClient
 	var chatAdapter *sharkfininfra.Adapter
 
 	if cfg.PylonURL != "" {
@@ -64,7 +70,9 @@ func NewServer(cfg ServerConfig) *http.Server {
 
 		// Discover Hive via Pylon.
 		if hiveSvc, err := pylonClient.ServiceByName(startupCtx, cfg.PylonServices.Hive); err == nil {
-			identityProvider = hiveinfra.New(hiveSvc.BaseURL, cfg.ServiceToken)
+			adapter := hiveinfra.New(hiveSvc.BaseURL, cfg.ServiceToken)
+			identityProvider = adapter
+			hiveAgentClient = adapter
 		} else {
 			log.Warn("hive not found in Pylon, identity checks disabled", "err", err)
 		}
@@ -91,11 +99,22 @@ func NewServer(cfg ServerConfig) *http.Server {
 	if chatAdapter != nil {
 		svc = svc.WithChat(chatAdapter)
 	}
+
+	var sch *scheduler.Scheduler
+	if hiveAgentClient != nil {
+		sch = scheduler.New(scheduler.Config{
+			Hive:  hiveAgentClient,
+			Audit: cfg.Store,
+		})
+	}
+
 	registerTemplateRoutes(api, cfg.Store)
 	registerInstanceRoutes(api, cfg.Store)
 	registerWorkItemRoutes(api, cfg.Store)
 	registerTransitionRoutes(api, svc)
 	registerApprovalRoutes(api, cfg.Store, svc)
+	registerRuntimeDiagRoutes(api, cfg.Runtime)
+	registerSchedulerAndAuditDiagRoutes(api, sch, cfg.Store)
 
 	// Health — raw handler (conditional status codes 200/218/503)
 	mux.HandleFunc("GET /v1/health", HandleHealth(cfg.Health))
@@ -151,7 +170,7 @@ func NewServer(cfg ServerConfig) *http.Server {
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
-	}
+	}, sch
 }
 
 // ListenAndServe starts the server on the configured address.

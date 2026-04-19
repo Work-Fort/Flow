@@ -19,6 +19,8 @@ import (
 	"github.com/Work-Fort/Flow/internal/config"
 	flowDaemon "github.com/Work-Fort/Flow/internal/daemon"
 	"github.com/Work-Fort/Flow/internal/infra"
+	"github.com/Work-Fort/Flow/internal/infra/runtime/stub"
+	"github.com/Work-Fort/Flow/internal/scheduler"
 )
 
 // NewCmd returns the daemon cobra command.
@@ -96,7 +98,7 @@ func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhook
 		return flowDaemon.CheckResult{Severity: flowDaemon.SeverityOK}
 	})
 
-	srv := flowDaemon.NewServer(flowDaemon.ServerConfig{
+	serverCfg := flowDaemon.ServerConfig{
 		Bind:         bind,
 		Port:         port,
 		PassportURL:  passportURL,
@@ -109,7 +111,11 @@ func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhook
 		WebhookBaseURL: webhookBaseURL,
 		Health:         health,
 		Store:          store,
-	})
+	}
+	if os.Getenv("FLOW_E2E_RUNTIME_STUB") == "1" {
+		serverCfg.Runtime = stub.New()
+	}
+	srv, sched := flowDaemon.NewServer(serverCfg)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -125,6 +131,17 @@ func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhook
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	defer healthCancel()
 	go health.StartPeriodic(healthCtx, 30*time.Second)
+
+	if sched != nil {
+		renewer := scheduler.NewLeaseRenewer(scheduler.RenewerConfig{
+			Scheduler: sched,
+			Hive:      sched.HiveClient(),
+			Interval:  viper.GetDuration("lease-renewer-interval"),
+			LeaseTTL:  viper.GetDuration("lease-ttl"),
+		})
+		go renewer.Run(healthCtx)
+		log.Info("lease renewer started")
+	}
 
 	select {
 	case sig := <-sigCh:

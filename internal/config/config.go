@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -85,6 +86,11 @@ func InitViper() {
 	viper.SetDefault("pylon.services.hive", "hive")
 	viper.SetDefault("pylon.services.sharkfin", "sharkfin")
 	viper.SetDefault("webhook-base-url", "")
+	viper.SetDefault("lease-renewer-interval", 30*time.Second)
+	viper.SetDefault("lease-ttl", 2*time.Minute)
+
+	viper.BindEnv("lease-renewer-interval", "FLOW_LEASE_RENEWER_INTERVAL") //nolint:errcheck
+	viper.BindEnv("lease-ttl", "FLOW_LEASE_TTL")                           //nolint:errcheck
 
 	viper.SetConfigName(ConfigFileName)
 	viper.SetConfigType(ConfigType)
