@@ -31,10 +31,9 @@ import (
 //   - Stop()      — shuts the stub down (idempotent).
 //   - SignJWT(...) — produces a 1-hour token signed by the JWKS key, audience "flow".
 //   - APIKeyVerifyCount() — total /v1/verify-api-key requests since start.
-//     Used by future API-key tests to prove the apikey path was actually
-//     exercised (the JWT validator runs first in the chain; without this
-//     counter, an apikey-validator regression could be masked by the JWT
-//     validator returning the same 401).
+//     After scheme dispatch, this counter MUST stay zero when only Bearer
+//     (JWT) traffic is sent — the dispatch sends Bearer to the JWT path
+//     only. Tests that send ApiKey-v1 traffic must see the counter advance.
 type JWKSStub struct {
 	Addr       string
 	srv        *http.Server
