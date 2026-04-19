@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"os"
@@ -22,10 +21,10 @@ import (
 // daemonCfg captures the per-spawn configuration. Tests build it via
 // DaemonOption helpers.
 type daemonCfg struct {
-	pylonAddr      string // host:port of the Pylon stub (required)
-	passportAddr   string // host:port of the JWKS stub (required)
-	webhookBaseURL string // optional — passed to --webhook-base-url
-	dbDSN          string // explicit DB DSN override
+	pylonAddr      string
+	passportAddr   string
+	webhookBaseURL string
+	dbDSN          string
 }
 
 type DaemonOption func(*daemonCfg)
@@ -40,12 +39,12 @@ func WithDB(dsn string) DaemonOption {
 
 // Daemon represents a spawned flow daemon subprocess.
 type Daemon struct {
-	cmd     *exec.Cmd
-	addr    string // host:port the daemon listens on
-	xdgDir  string // tempdir backing XDG_STATE_HOME / XDG_CONFIG_HOME
-	stderr  *bytes.Buffer
-	signJWT func(id, username, displayName, userType string) string
-	stops   []func()
+	cmd        *exec.Cmd
+	addr       string
+	xdgDir     string
+	stderrFile *os.File // temp file backing stdout+stderr; read at Stop time
+	signJWT    func(id, username, displayName, userType string) string
+	stops      []func()
 }
 
 // StartDaemon spawns a flow daemon subprocess wired to in-process fakes.
@@ -107,23 +106,37 @@ func StartDaemon(
 		}
 	}
 
-	var stderrBuf bytes.Buffer
+	stderrFile, err := os.CreateTemp("", "flow-e2e-stderr-*")
+	if err != nil {
+		os.RemoveAll(xdgDir)
+		return nil, fmt.Errorf("create stderr temp file: %w", err)
+	}
+
 	cmd := exec.Command(binary, args...)
 	cmd.Env = append(os.Environ(),
 		"XDG_CONFIG_HOME="+xdgDir+"/config",
 		"XDG_STATE_HOME="+xdgDir+"/state",
 	)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+	// *os.File (not io.Writer) so exec.Cmd does not create a copy
+	// goroutine; Setpgid puts the daemon and any descendants in a
+	// fresh process group; WaitDelay force-closes any inherited fds
+	// after the daemon exits. See the orphan-process hardening
+	// section of go-service-architecture.
+	cmd.Stdout = stderrFile
+	cmd.Stderr = stderrFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = 10 * time.Second
 
 	if err := cmd.Start(); err != nil {
+		stderrFile.Close()
+		os.Remove(stderrFile.Name())
 		os.RemoveAll(xdgDir)
 		return nil, fmt.Errorf("start daemon: %w", err)
 	}
 
 	d := &Daemon{
 		cmd: cmd, addr: addr, xdgDir: xdgDir,
-		stderr: &stderrBuf, signJWT: signJWT,
+		stderrFile: stderrFile, signJWT: signJWT,
 	}
 
 	if err := waitReady(addr, 5*time.Second); err != nil {
@@ -141,38 +154,56 @@ func (d *Daemon) SignJWT(id, username, displayName, userType string) string {
 	return d.signJWT(id, username, displayName, userType)
 }
 
-// Stop sends SIGTERM, waits up to 5s, then SIGKILLs. Cleans tempdir.
-// Fails the test if the daemon emitted a DATA RACE marker on stderr.
-// On test failure, dumps the captured stderr buffer to t.Logf so a
-// daemon panic, fatal log line, or context-cancel chain explains the
-// failure even after stderr scrolled off the live tty.
+// Stop sends SIGTERM to the daemon's process group, waits up to 5s,
+// then SIGKILLs the group. Cleans tempdir. Fails the test if the
+// daemon emitted a DATA RACE marker on stderr. On test failure, dumps
+// the captured stderr to t.Logf so a daemon panic, fatal log line,
+// or context-cancel chain explains the failure even after stderr
+// scrolled off the live tty.
 func (d *Daemon) Stop(t testing.TB) {
 	t.Helper()
 	if d.cmd.Process != nil {
-		d.cmd.Process.Signal(syscall.SIGTERM)
-		done := make(chan struct{})
-		go func() { d.cmd.Wait(); close(done) }()
+		// pgid == pid because of Setpgid; signal the whole group so
+		// any leaked descendants die with the daemon.
+		pgid := d.cmd.Process.Pid
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		done := make(chan error, 1)
+		go func() { done <- d.cmd.Wait() }()
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
-			t.Log("daemon did not exit after SIGTERM, killing")
-			d.cmd.Process.Kill()
+			t.Log("daemon did not exit after SIGTERM, killing group")
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
 			<-done
 		}
 	}
-	if t.Failed() && d.stderr.Len() > 0 {
-		t.Logf("daemon stderr:\n%s", d.stderr.String())
+
+	var stderrBytes []byte
+	if d.stderrFile != nil {
+		// Read the captured output before unlinking.
+		stderrBytes, _ = os.ReadFile(d.stderrFile.Name())
+		d.stderrFile.Close()
+		os.Remove(d.stderrFile.Name())
+	}
+
+	if t.Failed() && len(stderrBytes) > 0 {
+		t.Logf("daemon stderr:\n%s", stderrBytes)
 	}
 	os.RemoveAll(d.xdgDir)
-	if strings.Contains(d.stderr.String(), "DATA RACE") {
+	if bytes.Contains(stderrBytes, []byte("DATA RACE")) {
 		t.Fatal("data race detected in daemon (see stderr above)")
 	}
 }
 
 func (d *Daemon) kill() {
 	if d.cmd.Process != nil {
-		d.cmd.Process.Kill()
+		pgid := d.cmd.Process.Pid
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		d.cmd.Wait()
+	}
+	if d.stderrFile != nil {
+		d.stderrFile.Close()
+		os.Remove(d.stderrFile.Name())
 	}
 	os.RemoveAll(d.xdgDir)
 }
