@@ -24,7 +24,7 @@ func dsn(t *testing.T) string {
 	return v
 }
 
-func openTestStore(t *testing.T) *postgres.Store {
+func openTestStore(t *testing.T) domain.Store {
 	t.Helper()
 	s, err := postgres.Open(dsn(t))
 	if err != nil {

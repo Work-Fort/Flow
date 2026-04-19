@@ -6,11 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Work-Fort/Flow/internal/domain"
 	"github.com/Work-Fort/Flow/internal/infra/sqlite"
 	"github.com/Work-Fort/Flow/internal/transfer"
 )
 
-func openStore(t *testing.T) *sqlite.Store {
+func openStore(t *testing.T) domain.Store {
 	t.Helper()
 	s, err := sqlite.Open("")
 	if err != nil {
