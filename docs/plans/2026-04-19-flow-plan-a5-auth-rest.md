@@ -92,8 +92,10 @@ because no REST path writes Steps or Transitions:
 `PatchTemplateInput` (`internal/daemon/rest_types.go:80-86`) only
 accepts `name` and `description`; `CreateTemplateInput` (lines 73-78)
 likewise. The store *does* support steps/transitions —
-`(*sqlite.Store).UpdateTemplate` (`templates.go:246-331`) and
-`(*postgres.Store).UpdateTemplate` already replace Steps and
+`(*sqlite.Store).UpdateTemplate`
+(`internal/infra/sqlite/templates.go:246-330`) and
+`(*postgres.Store).UpdateTemplate`
+(`internal/infra/postgres/templates.go`) already replace Steps and
 Transitions from the input struct. The handler is the only thing
 discarding them.
 
@@ -187,6 +189,18 @@ adding consumers.
 - Modify: `tests/e2e/harness/client.go:14-47`
 
 **Step 1: Update docstring on `Client` and add `NewClientAPIKey`**
+
+> **Field-rename semantic shift — read carefully.** The OLD code stored
+> the bare credential in `Client.token` and synthesised the scheme at
+> request time (`req.Header.Set("Authorization", "Bearer "+c.token)` at
+> `client.go:67`). The NEW code stores the FULL header value
+> (`"Bearer <jwt>"` or `"ApiKey-v1 <key>"`) in `Client.authHeader` and
+> writes it verbatim. Each constructor is responsible for prepending
+> its own scheme. Verify all four constructors below include their
+> respective scheme prefix; do NOT also synthesise the prefix in
+> `authedRequest`. Mis-applying this patch (e.g., leaving the old
+> `"Bearer "+c.token` and renaming `token` to `authHeader`) would emit
+> `"Bearer Bearer <jwt>"` and break every authenticated test.
 
 Replace `tests/e2e/harness/client.go:14-47` with:
 
@@ -566,9 +580,29 @@ line, around line 100):
 	stub := &JWKSStub{apiKeys: make(map[string]apiKeyEntry)}
 ```
 
-Pre-register the harness service token so existing tests
-(`daemon_auth_test.go:24`, agent_pool/audit/runtime tests via the
-service token in StartDaemon args) keep working:
+**API-key call-site audit (verified 2026-04-19 before tightening
+the stub).** Tightening the verify-api-key handler from "accept any
+non-empty key except INVALID" to "registry-only" risks 401-ing every
+unregistered call site. The full audit:
+
+| Call site | Sender | Header sent | Reaches JWKS stub? |
+|---|---|---|---|
+| `daemon_auth_test.go:54` (`TestDaemon_ApiKeyV1RoutesToVerify`) | test | `ApiKey-v1 harness-service-token` | YES — pre-register required |
+| Task 2 `TestAuth_ApiKeyV1WithJWTReturns401` | test | `ApiKey-v1 <jwt-string>` | YES — should return 401 (jwt-string not in registry, by design) |
+| `internal/infra/hive/adapter.go` (Flow → FakeHive) | daemon | `ApiKey-v1 harness-service-token` | NO — FakeHive doesn't validate (see `tests/e2e/harness/fake_hive.go:114-268` — no auth check on any handler) |
+| `internal/infra/sharkfin/adapter.go` (Flow → FakeSharkfin) | daemon | `ApiKey-v1 harness-service-token` | NO — FakeSharkfin doesn't validate |
+| `pylonclient.New` in `server.go:67` (Flow → PylonStub) | daemon | `ApiKey-v1 harness-service-token` | NO — PylonStub serves discovery without auth |
+
+The JWKS stub is only reached when Flow's INBOUND middleware dispatches
+an ApiKey-v1 header to the api-key validator, which then calls
+`POST /v1/verify-api-key` against the JWKS stub. Outbound calls Flow
+makes (to fake Hive/Sharkfin/Pylon) carry the same token but never
+hit the JWKS stub.
+
+Conclusion: pre-registering ONLY `harness-service-token` is sufficient.
+No daemon-internal flow sends an unrelated API key to its own
+validator. Add the pre-registration in the same block as
+`stub := &JWKSStub{...}`:
 
 ```go
 	stub.apiKeys["harness-service-token"] = apiKeyEntry{
@@ -577,6 +611,11 @@ service token in StartDaemon args) keep working:
 		userType: "service",
 	}
 ```
+
+If a future test introduces a NEW API-key call site, that test must
+register its key via `JWKSStub.MintAPIKey(...)` (added below) before
+the call is made — the audit above is the contract; deviating from it
+without re-running the audit is a Plan-A.5 regression.
 
 Replace the `POST /v1/verify-api-key` handler body (lines 107-128) with:
 
@@ -629,8 +668,10 @@ func (s *JWKSStub) MintAPIKey(key, id, username, displayName, userType string) {
 }
 ```
 
-Add the import for `sync` at the top if not present (it is — already
-used by `apiKeyHits atomic.Int64`).
+Add `"sync"` to the import block. The current file imports
+`"sync/atomic"` (for `apiKeyHits atomic.Int64`), which is a different
+package — `sync` and `sync/atomic` are NOT the same import. The new
+`sync.Mutex` field requires the parent `sync` package.
 
 **Step 4: Run the failing tests to confirm they fail for the right reason**
 
@@ -642,14 +683,15 @@ stub adjustments needed to express the expectations).
 If `TestAuth_ApiKeyV1WithJWTReturns401` fails on a 200, the stub's
 permissive branch wasn't tightened correctly — re-check Step 3.
 
-If `TestAuth_MalformedAuthorizationReturns401` fails on the
-"old api-key alias" case (`ApiKey ABC`) returning 200, the daemon's
-scheme dispatcher is matching prefixes loosely. That's a Passport-
-side bug, not a Flow plan-A.5 bug — file in
-`AGENT-POOL-REMAINING-WORK.md` and skip the subtest with
-`t.Skip("blocked on passport: ApiKey vs ApiKey-v1 prefix collision")`,
-**only** if confirmed by reading service-auth source. Do NOT skip
-without verification.
+**Pre-verified.** Reading
+`passport/lead/go/service-auth/middleware.go:22-35` confirms
+`parseAuthScheme` splits at the FIRST space and the dispatcher does
+exact case-sensitive scheme equality (`switch scheme { case
+SchemeBearer: ... case SchemeApiKeyV1: ... default: 401 }`). Therefore
+`"ApiKey ABC"` parses to scheme=`"ApiKey"` (not `"ApiKey-v1"`), falls
+through to `default`, returns 401. Same for every other case in the
+table. `TestAuth_MalformedAuthorizationReturns401` MUST pass on every
+subtest — no `t.Skip` is permitted.
 
 **Step 5: Commit**
 
@@ -681,6 +723,17 @@ tests in Task 5.
 **Files:**
 - Create: `tests/e2e/templates_test.go`
 - Create: `tests/e2e/instances_test.go`
+
+> **JSON-tag convention for every test struct in this plan.** The
+> daemon emits snake_case JSON (e.g., `template_id`, `current_step_id`,
+> `from_step_id`). Go's `encoding/json` does case-insensitive matching
+> only over identical strings — `TemplateID` does NOT match
+> `template_id` (the underscore is a difference, not a case). EVERY
+> anonymous struct that decodes a daemon response MUST carry explicit
+> `json:"snake_case"` tags on each multi-word field. Single-word
+> fields (`Name`, `Title`, `Status`, `Decision`, `Comment`, `Priority`,
+> `Version`, `ID`) match by case-folding and may omit the tag, but
+> for consistency the code blocks below tag every field.
 
 **Step 1: Write `templates_test.go`**
 
@@ -727,8 +780,9 @@ func TestTemplates_CreateGetUpdateDelete(t *testing.T) {
 
 	// Create
 	var created struct {
-		ID, Name string
-		Version  int
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Version int    `json:"version"`
 	}
 	createReq := map[string]any{"name": "Triage", "description": "Initial triage flow"}
 	status, body, err := c.PostJSON("/v1/templates", createReq, &created)
@@ -741,8 +795,10 @@ func TestTemplates_CreateGetUpdateDelete(t *testing.T) {
 
 	// Get (single)
 	var got struct {
-		ID, Name, Description string
-		Version               int
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Version     int    `json:"version"`
 	}
 	status, body, err = c.GetJSON("/v1/templates/"+created.ID, &got)
 	if err != nil || status != http.StatusOK {
@@ -765,7 +821,9 @@ func TestTemplates_CreateGetUpdateDelete(t *testing.T) {
 	// Update
 	patchReq := map[string]any{"description": "Updated description"}
 	var updated struct {
-		ID, Name, Description string
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
 	}
 	status, body, err = c.PatchJSON("/v1/templates/"+created.ID, patchReq, &updated)
 	if err != nil || status != http.StatusOK {
@@ -819,7 +877,9 @@ import (
 // returns its ID. Used by instance tests that do not need work items.
 func createBareTemplate(t *testing.T, c *harness.Client, name string) string {
 	t.Helper()
-	var out struct{ ID string }
+	var out struct {
+		ID string `json:"id"`
+	}
 	status, body, err := c.PostJSON("/v1/templates", map[string]any{"name": name}, &out)
 	if err != nil || status != http.StatusCreated {
 		t.Fatalf("create template: status=%d err=%v body=%s", status, err, body)
@@ -850,7 +910,11 @@ func TestInstances_CreateGetUpdateList(t *testing.T) {
 
 	// Create
 	var inst struct {
-		ID, TemplateID, TeamID, Name, Status string
+		ID         string `json:"id"`
+		TemplateID string `json:"template_id"`
+		TeamID     string `json:"team_id"`
+		Name       string `json:"name"`
+		Status     string `json:"status"`
 	}
 	createReq := map[string]any{
 		"template_id": tplID, "team_id": "team-A", "name": "Q1 Triage",
@@ -867,7 +931,10 @@ func TestInstances_CreateGetUpdateList(t *testing.T) {
 	}
 
 	// Get
-	var got struct{ Name, Status string }
+	var got struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
 	status, _, err = c.GetJSON("/v1/instances/"+inst.ID, &got)
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("get: status=%d err=%v", status, err)
@@ -877,7 +944,9 @@ func TestInstances_CreateGetUpdateList(t *testing.T) {
 	}
 
 	// Update (status → paused)
-	var updated struct{ Status string }
+	var updated struct {
+		Status string `json:"status"`
+	}
 	patchReq := map[string]any{"status": "paused"}
 	status, body, err = c.PatchJSON("/v1/instances/"+inst.ID, patchReq, &updated)
 	if err != nil || status != http.StatusOK {
@@ -888,7 +957,10 @@ func TestInstances_CreateGetUpdateList(t *testing.T) {
 	}
 
 	// List filtered by team_id
-	var list []struct{ ID, TeamID string }
+	var list []struct {
+		ID     string `json:"id"`
+		TeamID string `json:"team_id"`
+	}
 	status, _, err = c.GetJSON("/v1/instances?team_id=team-A", &list)
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("list: status=%d err=%v", status, err)
@@ -898,7 +970,9 @@ func TestInstances_CreateGetUpdateList(t *testing.T) {
 	}
 
 	// List with non-matching filter
-	var empty []struct{ ID string }
+	var empty []struct {
+		ID string `json:"id"`
+	}
 	status, _, _ = c.GetJSON("/v1/instances?team_id=team-Z", &empty)
 	if status != http.StatusOK || len(empty) != 0 {
 		t.Errorf("list filtered: status=%d len=%d", status, len(empty))
@@ -944,8 +1018,104 @@ this change).
   `PatchTemplateInput`)
 - Modify: `internal/daemon/rest_huma.go:178-202` (the `update-template`
   handler)
+- Modify: `internal/infra/sqlite/templates.go` (Step 0 — add the
+  missing DELETEs for transitions/role_mappings/integration_hooks)
+- Modify: `internal/infra/postgres/templates.go` (Step 0 — same)
 - Modify: `tests/e2e/templates_test.go` (add a test asserting the
-  steps/transitions PATCH path round-trips through GET)
+  steps/transitions PATCH path round-trips through GET, plus a
+  multi-PATCH test that proves the new DELETEs are correct)
+
+**Step 0: Fix latent UpdateTemplate UPSERT bug (both stores)**
+
+The plan's correctness rests on `UpdateTemplate` having
+"replace-on-write semantics" for steps and transitions. Verified
+behaviour:
+
+| Collection | sqlite | postgres |
+|---|---|---|
+| `steps` | `DELETE FROM steps WHERE template_id = ?` precedes INSERT loop (`internal/infra/sqlite/templates.go:265`) | Same — `internal/infra/postgres/templates.go:265` |
+| `transitions` | INSERT only — no DELETE | INSERT only — no DELETE |
+| `role_mappings` | INSERT only — no DELETE | INSERT only — no DELETE |
+| `integration_hooks` | INSERT only — no DELETE | INSERT only — no DELETE |
+
+A second PATCH that includes `transitions[]` would trip a UNIQUE
+constraint on the transitions PK (or duplicate, depending on schema).
+The plan's single-PATCH happy-path test in Step 4 below would not
+surface this, but the public REST contract this plan introduces
+("PATCH /v1/templates/{id} with `transitions[]` replaces the
+collection") would silently fail.
+
+In `internal/infra/sqlite/templates.go`, immediately after the
+existing `DELETE FROM steps` on line ~265 (and the subsequent step
+INSERT loop), insert THREE additional DELETE statements before the
+respective INSERT loops:
+
+```go
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transitions WHERE template_id = ?", t.ID); err != nil {
+		return fmt.Errorf("delete transitions: %w", err)
+	}
+	// (existing transitions INSERT loop follows)
+```
+
+```go
+	if _, err := tx.ExecContext(ctx, "DELETE FROM role_mappings WHERE template_id = ?", t.ID); err != nil {
+		return fmt.Errorf("delete role_mappings: %w", err)
+	}
+	// (existing role_mappings INSERT loop follows)
+```
+
+```go
+	if _, err := tx.ExecContext(ctx, "DELETE FROM integration_hooks WHERE template_id = ?", t.ID); err != nil {
+		return fmt.Errorf("delete integration_hooks: %w", err)
+	}
+	// (existing integration_hooks INSERT loop follows)
+```
+
+Apply the same three DELETEs in `internal/infra/postgres/templates.go`'s
+`UpdateTemplate`, using `$1` as the placeholder instead of `?`:
+
+```go
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transitions WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete transitions: %w", err)
+	}
+	// ...
+	if _, err := tx.ExecContext(ctx, "DELETE FROM role_mappings WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete role_mappings: %w", err)
+	}
+	// ...
+	if _, err := tx.ExecContext(ctx, "DELETE FROM integration_hooks WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete integration_hooks: %w", err)
+	}
+```
+
+Both DELETEs run inside the same transaction `UpdateTemplate` already
+opens, so atomicity is preserved.
+
+Run unit tests for the store layer to confirm no regression:
+
+Run: `mise run test`
+Expected: PASS (the existing UpdateTemplate tests in
+`internal/infra/sqlite/store_test.go` and
+`internal/infra/postgres/store_test.go` should keep passing — the new
+DELETEs are no-ops on the first call.)
+
+**Commit Step 0 separately so the latent-bug fix is bisectable:**
+
+```
+fix(stores): UpdateTemplate must delete transitions/role_mappings/hooks
+
+UpdateTemplate already DELETEs the steps collection before INSERTing
+the new set, but transitions, role_mappings, and integration_hooks
+were going straight to INSERT. A second update on a template that
+already had any of these would either trip a UNIQUE PRIMARY KEY
+violation or silently duplicate rows. Apply the same DELETE-then-
+INSERT pattern uniformly for all four collections, in both sqlite
+and postgres stores. No behaviour change on first UpdateTemplate call.
+
+Surfaces as a precondition for plan A.5's PATCH-seed extension —
+without this, the new public REST contract ("PATCH replaces
+transitions") would silently fail on the second call.
+```
 
 **Step 1: Extend `PatchTemplateInput.Body`**
 
@@ -960,7 +1130,9 @@ type PatchTemplateInput struct {
 		// Steps, when non-nil, REPLACES the template's step set.
 		// Each Step's TemplateID is overwritten with the URL path's id.
 		// Mirrors store.UpdateTemplate's replace-on-write semantics
-		// (sqlite/templates.go:265 deletes-then-inserts).
+		// (internal/infra/sqlite/templates.go:265 deletes-then-inserts;
+		// the other three collections are deleted-then-inserted by
+		// the Step 0 fix above).
 		Steps []stepInput `json:"steps,omitempty"`
 		// Transitions, when non-nil, REPLACES the template's transition
 		// set. Each Transition's TemplateID is overwritten with the
@@ -1093,14 +1265,20 @@ func TestTemplates_PatchSeedsStepsAndTransitions(t *testing.T) {
 		},
 	}
 	var updated struct {
-		ID    string
+		ID    string `json:"id"`
 		Steps []struct {
-			ID, Key, Name, Type string
-			Position            int
-		}
+			ID       string `json:"id"`
+			Key      string `json:"key"`
+			Name     string `json:"name"`
+			Type     string `json:"type"`
+			Position int    `json:"position"`
+		} `json:"steps"`
 		Transitions []struct {
-			ID, Key, FromStepID, ToStepID string
-		}
+			ID         string `json:"id"`
+			Key        string `json:"key"`
+			FromStepID string `json:"from_step_id"`
+			ToStepID   string `json:"to_step_id"`
+		} `json:"transitions"`
 	}
 	status, body, err := c.PatchJSON("/v1/templates/"+tplID, patchReq, &updated)
 	if err != nil || status != http.StatusOK {
@@ -1115,8 +1293,15 @@ func TestTemplates_PatchSeedsStepsAndTransitions(t *testing.T) {
 
 	// Round-trip via GET.
 	var fetched struct {
-		Steps       []struct{ ID, Key string }
-		Transitions []struct{ ID, FromStepID, ToStepID string }
+		Steps []struct {
+			ID  string `json:"id"`
+			Key string `json:"key"`
+		} `json:"steps"`
+		Transitions []struct {
+			ID         string `json:"id"`
+			FromStepID string `json:"from_step_id"`
+			ToStepID   string `json:"to_step_id"`
+		} `json:"transitions"`
 	}
 	status, _, err = c.GetJSON("/v1/templates/"+tplID, &fetched)
 	if err != nil || status != http.StatusOK {
@@ -1127,6 +1312,60 @@ func TestTemplates_PatchSeedsStepsAndTransitions(t *testing.T) {
 	}
 	if len(fetched.Transitions) != 2 || fetched.Transitions[0].FromStepID != "stp_a" {
 		t.Errorf("transitions: %+v", fetched.Transitions)
+	}
+}
+
+// TestTemplates_PatchSeedsTwiceReplaces is the regression test for
+// the Step 0 fix to UpdateTemplate. A second PATCH with a smaller
+// transitions[] array must REPLACE (not append-and-conflict) the
+// previous set. Without the fix, this either fails on a UNIQUE
+// constraint violation or surfaces 4 transitions instead of 1.
+func TestTemplates_PatchSeedsTwiceReplaces(t *testing.T) {
+	env := harness.NewEnv(t)
+	defer env.Cleanup(t)
+	c := authedClient(t, env)
+
+	tplID := createBareTemplate(t, c, "Twice")
+
+	first := map[string]any{
+		"steps": []map[string]any{
+			{"id": "s1", "key": "k1", "name": "N1", "type": "task", "position": 0},
+			{"id": "s2", "key": "k2", "name": "N2", "type": "task", "position": 1},
+		},
+		"transitions": []map[string]any{
+			{"id": "t1", "key": "k1", "name": "N1", "from_step_id": "s1", "to_step_id": "s2"},
+			{"id": "t2", "key": "k2", "name": "N2", "from_step_id": "s2", "to_step_id": "s1"},
+		},
+	}
+	if status, body, err := c.PatchJSON("/v1/templates/"+tplID, first, nil); err != nil || status != http.StatusOK {
+		t.Fatalf("first patch: status=%d err=%v body=%s", status, err, body)
+	}
+
+	// Second PATCH with a smaller transition set MUST replace, not append.
+	second := map[string]any{
+		"steps": []map[string]any{
+			{"id": "s1", "key": "k1", "name": "N1", "type": "task", "position": 0},
+			{"id": "s2", "key": "k2", "name": "N2", "type": "task", "position": 1},
+		},
+		"transitions": []map[string]any{
+			{"id": "t9", "key": "only", "name": "Only",
+				"from_step_id": "s1", "to_step_id": "s2"},
+		},
+	}
+	if status, body, err := c.PatchJSON("/v1/templates/"+tplID, second, nil); err != nil || status != http.StatusOK {
+		t.Fatalf("second patch: status=%d err=%v body=%s", status, err, body)
+	}
+
+	var fetched struct {
+		Transitions []struct {
+			ID string `json:"id"`
+		} `json:"transitions"`
+	}
+	if status, body, err := c.GetJSON("/v1/templates/"+tplID, &fetched); err != nil || status != http.StatusOK {
+		t.Fatalf("get: status=%d err=%v body=%s", status, err, body)
+	}
+	if len(fetched.Transitions) != 1 || fetched.Transitions[0].ID != "t9" {
+		t.Errorf("after second patch: want exactly [t9], got %+v", fetched.Transitions)
 	}
 }
 ```
@@ -1148,19 +1387,23 @@ Re-run all template tests to confirm no regression:
 Run: `mise run e2e --backend=sqlite -run TestTemplates_`
 Expected: All four tests PASS.
 
-**Step 5: Commit**
+**Step 5: Commit (one commit, after Step 0's fix is already on disk)**
 
 ```
 feat(rest): allow PATCH /v1/templates/{id} to seed steps + transitions
 
 PatchTemplateInput now accepts optional steps[] and transitions[]
 arrays. When present, the handler replaces the template's collections
-and delegates to store.UpdateTemplate, which has always supported
-replace-on-write semantics for these fields. Without this, no public
-REST path could write the step graph a work item needs to exist.
+and delegates to store.UpdateTemplate. Without this, no public REST
+path could write the step graph a work item needs to exist.
 
-Adds a round-trip e2e test asserting the seeded shape survives a
-subsequent GET.
+Combined with the prior commit fixing the missing DELETEs in
+UpdateTemplate, the public contract ("PATCH replaces steps and
+transitions") now matches store behaviour.
+
+Adds two e2e tests: a round-trip seed asserting the shape survives a
+subsequent GET, and a multi-PATCH test asserting the second PATCH
+replaces (not appends to) the first.
 ```
 
 ---
@@ -1194,7 +1437,9 @@ other template helpers):
 // exercised without role-resolution wiring.
 func seedThreeStepTemplate(t *testing.T, c *harness.Client) string {
 	t.Helper()
-	var tpl struct{ ID string }
+	var tpl struct {
+		ID string `json:"id"`
+	}
 	if status, body, err := c.PostJSON("/v1/templates",
 		map[string]any{"name": "Three-Step"}, &tpl); err != nil || status != http.StatusCreated {
 		t.Fatalf("create template: status=%d err=%v body=%s", status, err, body)
@@ -1226,7 +1471,9 @@ func seedThreeStepTemplate(t *testing.T, c *harness.Client) string {
 // and returns the instance ID.
 func seedActiveInstance(t *testing.T, c *harness.Client, tplID, teamID string) string {
 	t.Helper()
-	var inst struct{ ID string }
+	var inst struct {
+		ID string `json:"id"`
+	}
 	if status, body, err := c.PostJSON("/v1/instances",
 		map[string]any{"template_id": tplID, "team_id": teamID, "name": "test-inst"},
 		&inst); err != nil || status != http.StatusCreated {
@@ -1259,7 +1506,11 @@ func TestWorkItems_CreateGetListUpdate(t *testing.T) {
 
 	// Create work item.
 	var wi struct {
-		ID, InstanceID, Title, CurrentStepID, Priority string
+		ID            string `json:"id"`
+		InstanceID    string `json:"instance_id"`
+		Title         string `json:"title"`
+		CurrentStepID string `json:"current_step_id"`
+		Priority      string `json:"priority"`
 	}
 	createReq := map[string]any{
 		"title": "First task", "description": "Body",
@@ -1278,7 +1529,10 @@ func TestWorkItems_CreateGetListUpdate(t *testing.T) {
 
 	// List by instance.
 	var list []struct {
-		ID, Title, AssignedAgentID, Priority string
+		ID              string `json:"id"`
+		Title           string `json:"title"`
+		AssignedAgentID string `json:"assigned_agent_id"`
+		Priority        string `json:"priority"`
 	}
 	status, body, err = c.GetJSON("/v1/instances/"+instID+"/items", &list)
 	if err != nil || status != http.StatusOK {
@@ -1289,12 +1543,16 @@ func TestWorkItems_CreateGetListUpdate(t *testing.T) {
 	}
 
 	// List filtered by agent_id.
-	var byAgent []struct{ ID string }
+	var byAgent []struct {
+		ID string `json:"id"`
+	}
 	status, _, _ = c.GetJSON("/v1/instances/"+instID+"/items?agent_id=a_001", &byAgent)
 	if status != http.StatusOK || len(byAgent) != 1 {
 		t.Errorf("filter agent_id: status=%d len=%d", status, len(byAgent))
 	}
-	var byOther []struct{ ID string }
+	var byOther []struct {
+		ID string `json:"id"`
+	}
 	status, _, _ = c.GetJSON("/v1/instances/"+instID+"/items?agent_id=a_999", &byOther)
 	if status != http.StatusOK || len(byOther) != 0 {
 		t.Errorf("filter agent_id no-match: status=%d len=%d", status, len(byOther))
@@ -1302,7 +1560,9 @@ func TestWorkItems_CreateGetListUpdate(t *testing.T) {
 
 	// Get single.
 	var got struct {
-		ID, Title, Priority string
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		Priority string `json:"priority"`
 	}
 	status, _, err = c.GetJSON("/v1/items/"+wi.ID, &got)
 	if err != nil || status != http.StatusOK {
@@ -1314,7 +1574,9 @@ func TestWorkItems_CreateGetListUpdate(t *testing.T) {
 
 	// Patch.
 	patchReq := map[string]any{"title": "Renamed task"}
-	var patched struct{ Title string }
+	var patched struct {
+		Title string `json:"title"`
+	}
 	status, body, err = c.PatchJSON("/v1/items/"+wi.ID, patchReq, &patched)
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("patch: status=%d err=%v body=%s", status, err, body)
@@ -1332,7 +1594,9 @@ func TestWorkItems_HistoryEmptyBeforeTransition(t *testing.T) {
 	tplID := seedThreeStepTemplate(t, c)
 	instID := seedActiveInstance(t, c, tplID, "team-H")
 
-	var wi struct{ ID string }
+	var wi struct {
+		ID string `json:"id"`
+	}
 	if status, body, err := c.PostJSON("/v1/instances/"+instID+"/items",
 		map[string]any{"title": "T"}, &wi); err != nil || status != http.StatusCreated {
 		t.Fatalf("create wi: status=%d err=%v body=%s", status, err, body)
@@ -1371,7 +1635,8 @@ func TestTransitions_MoveTodoToReview(t *testing.T) {
 	instID := seedActiveInstance(t, c, tplID, "team-T")
 
 	var wi struct {
-		ID, CurrentStepID string
+		ID            string `json:"id"`
+		CurrentStepID string `json:"current_step_id"`
 	}
 	if status, body, err := c.PostJSON("/v1/instances/"+instID+"/items",
 		map[string]any{"title": "Transition test"}, &wi); err != nil || status != http.StatusCreated {
@@ -1387,7 +1652,9 @@ func TestTransitions_MoveTodoToReview(t *testing.T) {
 		"actor_agent_id": "a_actor", "actor_role_id": "role_dev",
 		"reason":         "ready for review",
 	}
-	var moved struct{ CurrentStepID string }
+	var moved struct {
+		CurrentStepID string `json:"current_step_id"`
+	}
 	status, body, err := c.PostJSON("/v1/items/"+wi.ID+"/transition", transReq, &moved)
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("transition: status=%d err=%v body=%s", status, err, body)
@@ -1398,7 +1665,11 @@ func TestTransitions_MoveTodoToReview(t *testing.T) {
 
 	// History should now have one entry.
 	var hist []struct {
-		FromStepID, ToStepID, TransitionID, TriggeredBy, Reason string
+		FromStepID   string `json:"from_step_id"`
+		ToStepID     string `json:"to_step_id"`
+		TransitionID string `json:"transition_id"`
+		TriggeredBy  string `json:"triggered_by"`
+		Reason       string `json:"reason"`
 	}
 	status, _, err = c.GetJSON("/v1/items/"+wi.ID+"/history", &hist)
 	if err != nil || status != http.StatusOK {
@@ -1424,7 +1695,9 @@ func TestTransitions_InvalidTransitionRejected(t *testing.T) {
 	tplID := seedThreeStepTemplate(t, c)
 	instID := seedActiveInstance(t, c, tplID, "team-INV")
 
-	var wi struct{ ID string }
+	var wi struct {
+		ID string `json:"id"`
+	}
 	if status, body, err := c.PostJSON("/v1/instances/"+instID+"/items",
 		map[string]any{"title": "X"}, &wi); err != nil || status != http.StatusCreated {
 		t.Fatalf("create wi: status=%d err=%v body=%s", status, err, body)
@@ -1467,7 +1740,9 @@ func TestApprovals_ApprovePath(t *testing.T) {
 	wiID := createAndAdvance(t, c, instID, "stp_review")
 
 	approveReq := map[string]any{"agent_id": "a_reviewer", "comment": "LGTM"}
-	var approved struct{ CurrentStepID string }
+	var approved struct {
+		CurrentStepID string `json:"current_step_id"`
+	}
 	status, body, err := c.PostJSON("/v1/items/"+wiID+"/approve", approveReq, &approved)
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("approve: status=%d err=%v body=%s", status, err, body)
@@ -1478,7 +1753,10 @@ func TestApprovals_ApprovePath(t *testing.T) {
 
 	// List approvals — should have one approved entry.
 	var list []struct {
-		WorkItemID, AgentID, Decision, Comment string
+		WorkItemID string `json:"work_item_id"`
+		AgentID    string `json:"agent_id"`
+		Decision   string `json:"decision"`
+		Comment    string `json:"comment"`
 	}
 	status, _, err = c.GetJSON("/v1/items/"+wiID+"/approvals", &list)
 	if err != nil || status != http.StatusOK {
@@ -1504,18 +1782,23 @@ func TestApprovals_RejectPath(t *testing.T) {
 	wiID := createAndAdvance(t, c, instID, "stp_review")
 
 	rejectReq := map[string]any{"agent_id": "a_reviewer", "comment": "needs work"}
-	var rejected struct{ CurrentStepID string }
+	var rejected struct {
+		CurrentStepID string `json:"current_step_id"`
+	}
 	status, body, err := c.PostJSON("/v1/items/"+wiID+"/reject", rejectReq, &rejected)
 	if err != nil || status != http.StatusOK {
 		t.Fatalf("reject: status=%d err=%v body=%s", status, err, body)
 	}
-	// Rejection without a configured RejectionStepID returns the work
-	// item to the same step (or whatever workflow.RejectItem decides).
-	// Assert only that the call succeeded and the approval was
-	// recorded — not the destination step, which is the workflow
-	// service's contract, not the REST surface's.
+	// Verified by reading internal/workflow/service.go:335-397 — RejectItem
+	// with empty RejectionStepID succeeds, records the Approval, and
+	// leaves CurrentStepID unchanged. Assert only that the call
+	// succeeded and the approval was recorded; do not assert the
+	// destination step, which is the workflow service's contract,
+	// not the REST surface's.
 	var list []struct {
-		AgentID, Decision, Comment string
+		AgentID  string `json:"agent_id"`
+		Decision string `json:"decision"`
+		Comment  string `json:"comment"`
 	}
 	status, _, err = c.GetJSON("/v1/items/"+wiID+"/approvals", &list)
 	if err != nil || status != http.StatusOK {
@@ -1537,7 +1820,9 @@ func TestApprovals_ListEmptyBeforeAnyDecision(t *testing.T) {
 	tplID := seedThreeStepTemplate(t, c)
 	instID := seedActiveInstance(t, c, tplID, "team-EM")
 
-	var wi struct{ ID string }
+	var wi struct {
+		ID string `json:"id"`
+	}
 	if status, body, err := c.PostJSON("/v1/instances/"+instID+"/items",
 		map[string]any{"title": "T"}, &wi); err != nil || status != http.StatusCreated {
 		t.Fatalf("create wi: status=%d err=%v body=%s", status, err, body)
@@ -1559,7 +1844,8 @@ func TestApprovals_ListEmptyBeforeAnyDecision(t *testing.T) {
 func createAndAdvance(t *testing.T, c *harness.Client, instID, wantStep string) string {
 	t.Helper()
 	var wi struct {
-		ID, CurrentStepID string
+		ID            string `json:"id"`
+		CurrentStepID string `json:"current_step_id"`
 	}
 	if status, body, err := c.PostJSON("/v1/instances/"+instID+"/items",
 		map[string]any{"title": "to-be-advanced"}, &wi); err != nil || status != http.StatusCreated {
@@ -1568,7 +1854,9 @@ func createAndAdvance(t *testing.T, c *harness.Client, instID, wantStep string) 
 	transReq := map[string]any{
 		"transition_id": "trn_submit", "actor_agent_id": "a_dev", "actor_role_id": "role_dev",
 	}
-	var moved struct{ CurrentStepID string }
+	var moved struct {
+		CurrentStepID string `json:"current_step_id"`
+	}
 	if status, body, err := c.PostJSON("/v1/items/"+wi.ID+"/transition", transReq, &moved); err != nil || status != http.StatusOK {
 		t.Fatalf("submit: status=%d err=%v body=%s", status, err, body)
 	}
@@ -1587,16 +1875,14 @@ Expected: All seven tests PASS.
 Run: `mise run e2e --backend=postgres -run TestWorkItems_|TestTransitions_|TestApprovals_`
 Expected: All seven tests PASS.
 
-If `TestApprovals_RejectPath` returns a non-2xx, read
-`internal/workflow/service.go`'s `RejectItem` to confirm the contract
-(specifically: does it tolerate nil `RejectionStepID` configurations?).
-The seeded template's gate step has `RejectionStepID: ""` (omitted).
-If RejectItem requires a non-empty RejectionStepID, two options:
-either (a) seed the template with a self-loop rejection step
-(`"rejection_step_id": "stp_review"`), or (b) declare reject coverage
-out of scope and `t.Skip` with a TODO referencing the gap.
-**Verify the contract before deciding.** Do not skip without reading
-the service code first.
+**Pre-verified (no Skip allowed).** `internal/workflow/service.go:335-397`
+(`RejectItem`) tolerates `RejectionStepID == ""`: it records the
+Approval, leaves `CurrentStepID` unchanged, and returns 200. The
+seeded gate step uses an empty `ApproverRoleID` so no role check
+fires. `TestApprovals_RejectPath` MUST pass on both backends; if it
+returns non-2xx, the failure is real and must be fixed in this plan
+(do not `t.Skip`, do not file as a follow-up). Per
+`feedback_no_test_failures.md`.
 
 **Step 6: Commit (in two commits to keep diffs reviewable)**
 
@@ -1803,12 +2089,12 @@ without per-test API-key minting.
 
 | Variable | Used by | Default | Notes |
 |---|---|---|---|
-| `FLOW_BINARY` | `harness.NewEnv` | `../../build/flow` | `mise run e2e` sets this to a fresh `e2e`-tagged build |
-| `FLOW_DB` | `harness.StartDaemon` | (unset; SQLite default) | Used as `--db <dsn>` arg when set; takes precedence over `WithDB(...)` |
-| `FLOW_E2E_PG_DSN` | `harness.NewEnv` (PG backend) | `postgres://postgres@127.0.0.1/flow_test?sslmode=disable` | Only consulted when backend is `postgres` |
-| `FLOW_E2E_RUNTIME_STUB` | `harness.WithStubRuntimeEnv` | (unset) | When `1`, the daemon binds the stub `RuntimeDriver` so `/v1/runtime/_diag/*` works |
-| `FLOW_LEASE_RENEWER_INTERVAL` | daemon | `100ms` (set by harness) | Override only if a test needs a different cadence |
-| `FLOW_LEASE_TTL` | daemon | `2s` (set by harness) | Same |
+| `FLOW_BINARY` | `harness.NewEnv` (`harness/env.go:73`) | `../../build/flow` | `mise run e2e` sets this to a fresh `e2e`-tagged build |
+| `FLOW_DB` | `harness.StartDaemon` (`harness/daemon.go:102`) | (unset; SQLite default) | Used as `--db <dsn>` arg when set; takes precedence over `WithDB(...)` |
+| `FLOW_E2E_PG_DSN` | `harness.NewEnv` PG backend (`harness/env.go:97`) | `postgres://postgres@127.0.0.1/flow_test?sslmode=disable` | Only consulted when backend is `postgres` |
+| `FLOW_E2E_RUNTIME_STUB` | `harness.WithStubRuntime` (`harness/daemon.go:130`) | (unset) | When `1`, the daemon binds the stub `RuntimeDriver` so `/v1/runtime/_diag/*` works |
+| `FLOW_LEASE_RENEWER_INTERVAL` | daemon, set by harness (`harness/daemon.go:126`) | `100ms` | Override only if a test needs a different cadence |
+| `FLOW_LEASE_TTL` | daemon, set by harness (`harness/daemon.go:127`) | `2s` | Same |
 
 CI sets `FLOW_E2E_PG_DSN` to its service-container address; locally,
 the default points at the host's `postgres` peer-trust user.
@@ -1890,10 +2176,18 @@ After all tasks land:
       → `TestDaemon_BearerForAPIKeyReturns401` (existing); ApiKey-v1-
       with-JWT → `TestAuth_ApiKeyV1WithJWTReturns401`; public-path
       → `TestAuth_PublicHealthSkipsAuth`.
-- [ ] No `t.Skip` in this plan's added tests. (If reject-path
-      compatibility forced a skip in Task 5, the plan must be revised
-      to either configure rejection_step_id in the seeded template or
-      explicitly accept the skip with a tracker entry.)
+- [ ] No `t.Skip` in this plan's added tests — neither in the
+      reject-path test (RejectItem with empty RejectionStepID is
+      verified to succeed at `internal/workflow/service.go:335-397`)
+      nor in the malformed-Authorization table-driven test (verified
+      at `passport/lead/go/service-auth/middleware.go:22-35`).
+- [ ] Multi-PATCH regression test (`TestTemplates_PatchSeedsTwiceReplaces`)
+      passes — confirms the Step 0 fix to UpdateTemplate's missing
+      DELETE for transitions/role_mappings/integration_hooks.
+- [ ] Every anonymous struct receiver in this plan's tests carries
+      explicit `json:"snake_case"` tags on multi-word fields. Single-
+      word fields may rely on case-folding but are tagged for
+      consistency.
 - [ ] `tests/e2e/README.md` exists and lists every env var the harness
       currently reads.
 - [ ] No new dependencies in `tests/e2e/go.mod` (this plan uses only
