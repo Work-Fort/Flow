@@ -2,7 +2,7 @@
 type: plan
 step: "A.5"
 title: "Flow E2E harness — Plan A.5: auth coverage + 18 REST ops + harness README"
-status: approved
+status: complete
 assessment_status: complete
 provenance:
   source: roadmap
@@ -11,7 +11,7 @@ provenance:
 dates:
   created: "2026-04-19"
   approved: "2026-04-19"
-  completed: null
+  completed: "2026-04-19"
 related_plans:
   - "2026-04-18-flow-e2e-harness-01-foundation.md"
   - "2026-04-18-flow-orchestration-01-foundation.md"
