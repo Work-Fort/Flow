@@ -19,12 +19,19 @@ import (
 // surface and gated to localhost in a future plan once production
 // drivers land.
 func registerRuntimeDiagRoutes(api huma.API, rt domain.RuntimeDriver) {
+	// startInput carries the canonical demo sequence inputs plus an
+	// optional caller-supplied creds-volume ref. When CredsVolumeRef is
+	// the zero value, the handler asks the driver to materialize one
+	// via CloneWorkItemVolume from the project master — this lets the
+	// stub driver and the production Nexus driver both work without a
+	// kind check leaking into the handler.
 	type startInput struct {
 		Body struct {
-			ProjectID  string `json:"project_id"`
-			WorkItemID string `json:"work_item_id"`
-			AgentID    string `json:"agent_id"`
-			GitRef     string `json:"git_ref"`
+			ProjectID      string           `json:"project_id"`
+			WorkItemID     string           `json:"work_item_id"`
+			AgentID        string           `json:"agent_id"`
+			GitRef         string           `json:"git_ref"`
+			CredsVolumeRef domain.VolumeRef `json:"creds_volume_ref,omitempty"`
 		}
 	}
 	type startOutput struct {
@@ -54,7 +61,22 @@ func registerRuntimeDiagRoutes(api huma.API, rt domain.RuntimeDriver) {
 		if err != nil {
 			return nil, huma.NewError(http.StatusInternalServerError, err.Error())
 		}
-		creds := domain.VolumeRef{Kind: "stub", ID: "creds-" + input.Body.AgentID}
+
+		// Resolve the creds volume:
+		//   - when the caller supplied one (e.g. an integration test
+		//     that pre-created its own ref), trust it verbatim
+		//   - otherwise, ask the driver to materialize one by cloning
+		//     the project master under a per-agent name. The driver's
+		//     emit-kind is preserved so StartAgentRuntime's kind check
+		//     passes for both stub.Driver and nexus.Driver.
+		creds := input.Body.CredsVolumeRef
+		if creds == (domain.VolumeRef{}) {
+			creds, err = rt.CloneWorkItemVolume(ctx, master, "creds-"+input.Body.AgentID)
+			if err != nil {
+				return nil, huma.NewError(http.StatusInternalServerError, "materialize creds: "+err.Error())
+			}
+		}
+
 		h, err := rt.StartAgentRuntime(ctx, input.Body.AgentID, creds, work)
 		if err != nil {
 			return nil, huma.NewError(http.StatusInternalServerError, err.Error())
