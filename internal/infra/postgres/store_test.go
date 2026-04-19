@@ -278,6 +278,36 @@ func TestListWorkItems_Filters(t *testing.T) {
 	})
 }
 
+func TestAuditEvent_RoundTrip(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	lease := time.Now().UTC().Add(2 * time.Minute).Truncate(time.Second)
+	e := &domain.AuditEvent{
+		Type:           domain.AuditEventAgentClaimed,
+		AgentID:        newID("a"),
+		AgentName:      "agent-pg",
+		WorkflowID:     newID("wf"),
+		Role:           "reviewer",
+		Project:        "flow",
+		LeaseExpiresAt: lease,
+	}
+	if err := s.RecordAuditEvent(ctx, e); err != nil {
+		t.Fatalf("RecordAuditEvent: %v", err)
+	}
+
+	events, err := s.ListAuditEventsByWorkflow(ctx, e.WorkflowID)
+	if err != nil {
+		t.Fatalf("ListAuditEventsByWorkflow: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(events))
+	}
+	if !events[0].LeaseExpiresAt.Equal(lease) {
+		t.Errorf("LeaseExpiresAt round-trip: got %v, want %v", events[0].LeaseExpiresAt, lease)
+	}
+}
+
 func TestApprovalFlow(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
