@@ -292,6 +292,9 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *domain.WorkflowTemplate) 
 		}
 	}
 
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transitions WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete transitions: %w", err)
+	}
 	for _, tr := range t.Transitions {
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO transitions (id, template_id, key, name, from_step_id, to_step_id, guard, required_role_id)
@@ -302,6 +305,9 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *domain.WorkflowTemplate) 
 		}
 	}
 
+	if _, err := tx.ExecContext(ctx, "DELETE FROM role_mappings WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete role_mappings: %w", err)
+	}
 	for _, rm := range t.RoleMappings {
 		actionsJSON, _ := json.Marshal(rm.AllowedActions)
 		_, err = tx.ExecContext(ctx,
@@ -313,6 +319,9 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *domain.WorkflowTemplate) 
 		}
 	}
 
+	if _, err := tx.ExecContext(ctx, "DELETE FROM integration_hooks WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete integration_hooks: %w", err)
+	}
 	for _, h := range t.IntegrationHooks {
 		cfg := h.Config
 		if cfg == nil {
