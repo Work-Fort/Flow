@@ -1,0 +1,181 @@
+// SPDX-License-Identifier: GPL-2.0-only
+package harness
+
+import (
+	"bytes"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+	"testing"
+	"time"
+)
+
+// NexusDaemon represents a spawned Nexus daemon subprocess for the
+// Flow e2e suite. Lifecycle mirrors flow's own Daemon helper
+// (Setpgid + *os.File stderr + WaitDelay + negative-pid SIGTERM).
+type NexusDaemon struct {
+	cmd        *exec.Cmd
+	addr       string
+	xdgDir     string
+	stderrFile *os.File
+}
+
+// RequireNexusBinary returns the path to the Nexus binary, falling
+// back to "nexus" on PATH. When neither resolves, calls t.Skip with
+// an actionable message. Use this at the top of every Nexus-driven
+// e2e test.
+func RequireNexusBinary(t testing.TB) string {
+	t.Helper()
+	if p := os.Getenv("NEXUS_BINARY"); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		t.Skipf("NEXUS_BINARY=%s does not exist; build nexus or unset the env to fall back to PATH", p)
+	}
+	if p, err := exec.LookPath("nexus"); err == nil {
+		return p
+	}
+	t.Skipf("nexus binary not found on PATH and NEXUS_BINARY unset; build nexus (cd ../../nexus/lead && mise run build) and set NEXUS_BINARY=/path/to/nexus")
+	return ""
+}
+
+// RequireBtrfsForNexus skips when the working directory is not on
+// btrfs. The Nexus daemon's drive subsystem requires a btrfs root.
+func RequireBtrfsForNexus(t testing.TB) {
+	t.Helper()
+	const btrfsSuperMagic = 0x9123683e
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(".", &st); err != nil {
+		t.Skipf("statfs: %v", err)
+	}
+	if st.Type != btrfsSuperMagic {
+		t.Skip("working directory is not on btrfs; mount a btrfs filesystem or run from a btrfs subvolume")
+	}
+}
+
+// StartNexusDaemon spawns a Nexus daemon configured to listen on a
+// free port and use a temp XDG state dir. Returns the base URL and
+// a stop closure that the caller MUST defer. Capabilities-dependent
+// features (networking, DNS) are NOT enabled — this harness is
+// scoped to drive operations only, which the Flow Nexus driver
+// exercises in its v1 happy path. Adding network-enabled scenarios
+// is a separate plan once the Flow driver itself needs them.
+func StartNexusDaemon(t testing.TB) (baseURL string, stop func()) {
+	t.Helper()
+	binary := RequireNexusBinary(t)
+
+	xdgDir, err := os.MkdirTemp("", "flow-nexus-e2e-*")
+	if err != nil {
+		t.Fatalf("mkdir temp: %v", err)
+	}
+
+	addr, err := freePort()
+	if err != nil {
+		os.RemoveAll(xdgDir)
+		t.Fatalf("free port: %v", err)
+	}
+
+	stderrFile, err := os.CreateTemp("", "flow-nexus-stderr-*")
+	if err != nil {
+		os.RemoveAll(xdgDir)
+		t.Fatalf("create stderr temp: %v", err)
+	}
+
+	// Nexus's daemon CLI takes --listen <host:port> (single arg), NOT
+	// --bind/--port. Verified at nexus/lead/cmd/daemon.go:362 and used
+	// by Nexus's own e2e harness at
+	// nexus/lead/tests/e2e/harness/harness.go:150.
+	//
+	// We disable network/DNS and the quota helper:
+	//   --quota-helper ""        — nexus-quota requires CAP_SYS_ADMIN;
+	//                              btrfs subvol ops fail without it.
+	//                              Mirrors the Nexus e2e harness's own
+	//                              opt-out at nexus/lead/tests/e2e/
+	//                              nexus_test.go:130.
+	//   --network-enabled=false  — Flow driver v1 only exercises
+	//                              drive create + VM
+	//                              create+start+stop+delete; nothing
+	//                              needs CNI/bridge config.
+	//   --dns-enabled=false      — same reason; CoreDNS would expect
+	//                              nexus-dns helper with CAP_NET_BIND_SERVICE.
+	// Keeping these off makes the harness runnable from any directory
+	// on a btrfs filesystem without sudo or extra capabilities.
+	args := []string{
+		"daemon",
+		"--listen", addr,
+		"--log-level", "disabled",
+		"--quota-helper", "",
+		"--network-enabled=false",
+		"--dns-enabled=false",
+	}
+	cmd := exec.Command(binary, args...)
+	cmd.Env = append(os.Environ(),
+		"XDG_CONFIG_HOME="+filepath.Join(xdgDir, "config"),
+		"XDG_STATE_HOME="+filepath.Join(xdgDir, "state"),
+	)
+	cmd.Stdout = stderrFile
+	cmd.Stderr = stderrFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = 10 * time.Second
+
+	if err := cmd.Start(); err != nil {
+		stderrFile.Close()
+		os.Remove(stderrFile.Name())
+		os.RemoveAll(xdgDir)
+		t.Fatalf("start nexus: %v", err)
+	}
+
+	// Wait for /health to respond.
+	deadline := time.Now().Add(5 * time.Second)
+	healthURL := "http://" + addr + "/health"
+	for time.Now().Before(deadline) {
+		client := &http.Client{Timeout: 200 * time.Millisecond}
+		if resp, err := client.Get(healthURL); err == nil {
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	d := &NexusDaemon{cmd: cmd, addr: addr, xdgDir: xdgDir, stderrFile: stderrFile}
+	stop = func() { d.stop(t) }
+	t.Cleanup(stop)
+	return "http://" + addr, stop
+}
+
+// stop sends SIGTERM to the process group, waits up to 5s, then
+// SIGKILLs. Dumps captured stderr to t.Logf if the test failed.
+func (d *NexusDaemon) stop(t testing.TB) {
+	t.Helper()
+	if d.cmd == nil || d.cmd.Process == nil {
+		return
+	}
+	pgid := d.cmd.Process.Pid
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	done := make(chan error, 1)
+	go func() { done <- d.cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		<-done
+	}
+	d.cmd = nil
+
+	var stderrBytes []byte
+	if d.stderrFile != nil {
+		stderrBytes, _ = os.ReadFile(d.stderrFile.Name())
+		d.stderrFile.Close()
+		os.Remove(d.stderrFile.Name())
+		d.stderrFile = nil
+	}
+	if t.Failed() && len(stderrBytes) > 0 {
+		t.Logf("nexus stderr:\n%s", stderrBytes)
+	}
+	if bytes.Contains(stderrBytes, []byte("DATA RACE")) {
+		t.Fatal("data race in nexus daemon (see stderr above)")
+	}
+	os.RemoveAll(d.xdgDir)
+}
