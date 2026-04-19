@@ -61,6 +61,38 @@ linters:
                 on the Postgres adapter. Accept domain.Store as a parameter
                 instead.
 
+        # tests/e2e/ must speak raw wire protocols only — no MCP
+        # client, no Sharkfin/Hive/Pylon Go client imports. Drift
+        # between these and the real services must surface as test
+        # failure, not be hidden by a shared client.
+        # See feedback_e2e_harness_independence.md.
+        e2e-wire-only:
+          files:
+            - "**/tests/e2e/**/*.go"
+          list-mode: lax
+          deny:
+            - pkg: github.com/mark3labs/mcp-go
+              desc: >
+                The e2e harness must speak MCP wire protocol directly
+                (JSON-RPC 2.0 over streaming-HTTP). Importing the
+                MCP-go client would hide drift between the client and
+                Flow's mcp-go-backed server.
+            - pkg: github.com/Work-Fort/sharkfin/client/go
+              desc: >
+                The e2e harness must speak Sharkfin's REST surface
+                directly. Importing sharkfinclient would hide drift
+                between the client and Sharkfin's wire format.
+            - pkg: github.com/Work-Fort/Hive/client
+              desc: >
+                The e2e harness must speak Hive's REST surface
+                directly. Importing hiveclient would hide drift
+                between the client and Hive's wire format.
+            - pkg: github.com/Work-Fort/Pylon/client/go
+              desc: >
+                The e2e harness must speak Pylon's REST surface
+                directly. Importing pylonclient would hide drift
+                between the client and Pylon's wire format.
+
     forbidigo:
       # Forbid the qualified concrete types sqlite.Store and postgres.Store
       # in function signatures. This is the guard that test helpers must return
