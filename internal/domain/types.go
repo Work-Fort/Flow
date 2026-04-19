@@ -172,3 +172,32 @@ type IdentityRole struct {
 	Name     string
 	ParentID string
 }
+
+// --- runtime driver value types ---
+
+// VolumeRef identifies a volume/drive the runtime can attach to an agent
+// runtime. It is deliberately opaque: the orchestrator passes whatever
+// the driver returned from CloneWorkItemVolume or GetProjectMasterRef
+// back into StartAgentRuntime. Drivers interpret the Ref themselves.
+//
+// Maps cleanly to k8s: Kind="k8s-pvc", ID=<PVC name in the agent
+// namespace>. Maps to Nexus: Kind="nexus-drive", ID=<drive UUID>.
+type VolumeRef struct {
+	// Kind is driver-specific ("nexus-drive", "k8s-pvc", "stub", …).
+	Kind string
+	// ID is driver-specific (drive ID, PVC name, …).
+	ID string
+}
+
+// RuntimeHandle identifies a running agent runtime instance. The
+// orchestrator retains the handle between StartAgentRuntime and
+// StopAgentRuntime; drivers interpret it themselves.
+//
+// Maps to k8s: Kind="k8s-pod", ID=<pod name in the agent namespace>.
+// Maps to Nexus: Kind="nexus-vm", ID=<VM ID>.
+type RuntimeHandle struct {
+	// Kind is driver-specific ("nexus-vm", "k8s-pod", "stub", …).
+	Kind string
+	// ID is driver-specific (VM ID, pod name, …).
+	ID string
+}

@@ -62,6 +62,81 @@ type ChatProvider interface {
 	JoinChannel(ctx context.Context, channel string) error
 }
 
+// RuntimeDriver abstracts the runtime that actually executes an agent's
+// adjutant loop. Today there is one concrete driver (Nexus VMs, future
+// plan); tomorrow the long-term primary will be k8s pods + CSI
+// VolumeSnapshot. Per AGENT-POOL-REMAINING-WORK.md "Load-bearing
+// decisions": every method must map 1:1 to k8s primitives (Pods, PVCs,
+// CSI snapshots) so the k8s driver is a translation layer, not a
+// re-architecture.
+//
+// Seven methods. Resist bloating it.
+type RuntimeDriver interface {
+	// StartAgentRuntime brings an agent's runtime online, attaching the
+	// per-agent credentials volume and the per-work-item working volume.
+	// Returns a handle the caller must pass back to StopAgentRuntime.
+	//
+	// k8s mapping: create a Pod from a per-role PodTemplate with two
+	// volume mounts whose PVCs are creds.ID and work.ID; return
+	// {Kind:"k8s-pod", ID: pod.Name}. Nexus mapping: pick a free VM from
+	// the pool, attach drives creds.ID + work.ID, start the VM.
+	StartAgentRuntime(ctx context.Context, agentID string, creds, work VolumeRef) (RuntimeHandle, error)
+
+	// StopAgentRuntime shuts down a runtime previously started with
+	// StartAgentRuntime and detaches its volumes. Idempotent on already-
+	// stopped handles.
+	//
+	// k8s mapping: kubectl delete pod h.ID (with grace period). Nexus
+	// mapping: stop VM h.ID, detach drives, return VM to pool.
+	StopAgentRuntime(ctx context.Context, h RuntimeHandle) error
+
+	// IsRuntimeAlive returns true when the runtime at h is still
+	// executing. Used by higher-level liveness checks; MUST NOT block
+	// indefinitely — drivers should cap internal timeouts at ctx's
+	// deadline or ~2 s, whichever is smaller.
+	//
+	// k8s mapping: Pod.Status.Phase == "Running". Nexus mapping: VM
+	// status query.
+	IsRuntimeAlive(ctx context.Context, h RuntimeHandle) (bool, error)
+
+	// CloneWorkItemVolume forks the project master into a new volume
+	// dedicated to `workItemID`. Returns a VolumeRef the caller passes
+	// to StartAgentRuntime.
+	//
+	// k8s mapping: create a VolumeSnapshot of projectMaster.ID, then a
+	// PVC dataSourceRef'd at the snapshot (CSI clone-from-snapshot).
+	// Nexus mapping: btrfs subvolume snapshot of the master drive into
+	// a new drive named work-item-<workItemID>.
+	CloneWorkItemVolume(ctx context.Context, projectMaster VolumeRef, workItemID string) (VolumeRef, error)
+
+	// DeleteVolume destroys a volume previously returned from
+	// CloneWorkItemVolume. Idempotent.
+	//
+	// k8s mapping: delete the PVC (CSI driver handles the snapshot/
+	// volume reclaim). Nexus mapping: delete the drive.
+	DeleteVolume(ctx context.Context, v VolumeRef) error
+
+	// RefreshProjectMaster pulls the given git ref into the project
+	// master volume for `projectID`, running whatever warming steps
+	// (build, install) the project configures. Creates the volume on
+	// first call.
+	//
+	// k8s mapping: launch a one-shot Job that mounts the master PVC,
+	// runs `git pull` + warming script, then exits; CSI snapshot of
+	// the resulting PVC becomes the next clone source. Nexus mapping:
+	// run an ephemeral VM with the master drive attached, run the
+	// warming script, snapshot the result.
+	RefreshProjectMaster(ctx context.Context, projectID string, gitRef string) error
+
+	// GetProjectMasterRef returns the VolumeRef for `projectID`'s
+	// current master, or a zero-value VolumeRef when the project has no
+	// master yet (caller should RefreshProjectMaster first).
+	//
+	// k8s mapping: return the per-project master PVC name. Nexus
+	// mapping: return the project's master drive UUID.
+	GetProjectMasterRef(projectID string) VolumeRef
+}
+
 // IdentityProvider resolves agents and roles from an external identity service.
 // It is an optional dependency — if nil, role checks are skipped.
 type IdentityProvider interface {
