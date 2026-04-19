@@ -193,3 +193,32 @@ workflow through transitions and approvals, fires a Combine merge webhook, and
 releases the agent. Asserts the audit-event sequence (`agent_claimed` →
 `agent_released`) on the workflow's audit log. Use this test as the template when
 the bot-vocabulary plan adds real bot processes.
+
+## Nexus driver scenarios (`mise run e2e:nexus`)
+
+These scenarios under the `nexus_e2e` build tag exercise Flow's
+production `NexusDriver` against a real spawned Nexus daemon. They
+are isolated from the rest of the e2e suite because they require
+a Flow binary built WITHOUT the `e2e` tag (so the production
+runtime injection wins, not the env-gated stub).
+
+### Prerequisites
+
+| Requirement | Skip behavior |
+|-------------|---------------|
+| `nexus` binary on `$PATH` or `NEXUS_BINARY=/abs/path/to/nexus` | Skip with build instructions |
+| Working directory on a btrfs filesystem | Skip with mount hint |
+
+### Running
+
+```sh
+# Build Nexus first if not already on PATH:
+( cd ../../../nexus/lead && mise run build && export NEXUS_BINARY=$PWD/build/nexus )
+
+# Then from flow/lead:
+mise run e2e:nexus
+```
+
+The `e2e:nexus` task builds Flow without the e2e tag (so the
+production NexusDriver wins over the env-gated stub) and runs the
+nexus_e2e tag's tests under `tests/e2e/`.
