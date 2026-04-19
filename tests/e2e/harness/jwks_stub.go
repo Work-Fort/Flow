@@ -36,9 +36,9 @@ import (
 //     counter, an apikey-validator regression could be masked by the JWT
 //     validator returning the same 401).
 type JWKSStub struct {
-	Addr    string
-	srv     *http.Server
-	signJWT func(id, username, displayName, userType string) string
+	Addr       string
+	srv        *http.Server
+	signJWT    func(id, username, displayName, userType string) string
 	apiKeyHits atomic.Int64
 }
 
@@ -144,7 +144,7 @@ func StartJWKSStub() *JWKSStub {
 			Issuer("passport-stub").
 			Audience([]string{"flow"}).
 			IssuedAt(now).
-			Expiration(now.Add(1 * time.Hour)).
+			Expiration(now.Add(1*time.Hour)).
 			Claim("username", username).
 			Claim("name", displayName).
 			Claim("display_name", displayName).
