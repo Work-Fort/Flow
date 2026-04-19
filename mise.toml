@@ -8,10 +8,26 @@ description = "Build Flow with the e2e build tag (env-gated stub runtime injecto
 run = "go build -tags e2e -o build/flow-e2e ."
 
 [tasks."e2e:nexus"]
-description = "Run the Flow Nexus driver e2e scenarios (requires nexus binary on PATH or NEXUS_BINARY)"
+description = "Run the Flow Nexus driver e2e scenarios; builds a fresh nexus binary from ../nexus/lead"
 depends = ["build:dev"]
 run = """
 REPO_ROOT=$(pwd)
 export FLOW_BINARY="$REPO_ROOT/build/flow"
+
+# Build a fresh nexus binary so the task is self-sufficient and does
+# not rely on whatever version is installed in ~/.local/bin/nexus.
+# NEXUS_BINARY env var still wins if the caller wants to override.
+if [ -z "${NEXUS_BINARY:-}" ]; then
+  NEXUS_SRC="$REPO_ROOT/../../nexus/lead"
+  if [ ! -d "$NEXUS_SRC" ]; then
+    echo "nexus/lead not found at $NEXUS_SRC — set NEXUS_BINARY to point at a pre-built nexus binary" >&2
+    exit 1
+  fi
+  mkdir -p "$REPO_ROOT/build"
+  echo "Building nexus from $NEXUS_SRC ..."
+  (cd "$NEXUS_SRC" && go build -o "$REPO_ROOT/build/nexus-e2e-bin" .)
+  export NEXUS_BINARY="$REPO_ROOT/build/nexus-e2e-bin"
+fi
+
 cd tests/e2e && go test -tags nexus_e2e -v -run TestNexusDriver ./...
 """
