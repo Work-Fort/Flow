@@ -3,6 +3,8 @@ package harness
 
 import (
 	"bytes"
+	"crypto/rand"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -55,6 +57,15 @@ func RequireBtrfsForNexus(t testing.TB) {
 	}
 }
 
+// randomNexusNamespace returns a unique containerd namespace for each
+// spawned Nexus daemon so that concurrent test runs never share
+// containerd objects. Mirrors Nexus's own e2e harness pattern.
+func randomNexusNamespace() string {
+	b := make([]byte, 4)
+	rand.Read(b) //nolint:errcheck // rand.Read never fails on Linux
+	return fmt.Sprintf("nexus-e2e-%x", b)
+}
+
 // StartNexusDaemon spawns a Nexus daemon configured to listen on a
 // free port and use a temp XDG state dir. Returns the base URL and
 // a stop closure that the caller MUST defer. Capabilities-dependent
@@ -66,7 +77,16 @@ func StartNexusDaemon(t testing.TB) (baseURL string, stop func()) {
 	t.Helper()
 	binary := RequireNexusBinary(t)
 
-	xdgDir, err := os.MkdirTemp("", "flow-nexus-e2e-*")
+	// Must be on btrfs (for BtrfsStorage) AND use an absolute path (so
+	// containerd can bind-mount drives into the container without a relative
+	// path that breaks when the shim's cwd differs from ours).
+	// os.Getwd() gives an absolute path; the cwd is tests/e2e/ when mise
+	// runs e2e:nexus, which is on the project btrfs subvolume.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	xdgDir, err := os.MkdirTemp(cwd, "flow-nexus-e2e-*")
 	if err != nil {
 		t.Fatalf("mkdir temp: %v", err)
 	}
@@ -102,10 +122,14 @@ func StartNexusDaemon(t testing.TB) (baseURL string, stop func()) {
 	//                              nexus-dns helper with CAP_NET_BIND_SERVICE.
 	// Keeping these off makes the harness runnable from any directory
 	// on a btrfs filesystem without sudo or extra capabilities.
+	// Use a unique containerd namespace per spawn so concurrent test
+	// invocations and the system nexus daemon never share containers.
+	ns := randomNexusNamespace()
 	args := []string{
 		"daemon",
 		"--listen", addr,
-		"--log-level", "disabled",
+		"--namespace", ns,
+		"--log-level", "debug",
 		"--quota-helper", "",
 		"--network-enabled=false",
 		"--dns-enabled=false",
@@ -170,6 +194,13 @@ func (d *NexusDaemon) stop(t testing.TB) {
 		d.stderrFile.Close()
 		os.Remove(d.stderrFile.Name())
 		d.stderrFile = nil
+	}
+	// Nexus writes structured logs to XDG_STATE_HOME/nexus/debug.log, not stderr.
+	// Always include them when the test fails so the error context is visible.
+	if t.Failed() {
+		if logBytes, err := os.ReadFile(filepath.Join(d.xdgDir, "state", "nexus", "debug.log")); err == nil && len(logBytes) > 0 {
+			t.Logf("nexus debug.log:\n%s", logBytes)
+		}
 	}
 	if t.Failed() && len(stderrBytes) > 0 {
 		t.Logf("nexus stderr:\n%s", stderrBytes)
