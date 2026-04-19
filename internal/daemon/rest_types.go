@@ -230,7 +230,7 @@ type PatchWorkItemInput struct {
 	Body struct {
 		Title           string          `json:"title,omitempty" doc:"Work item title"`
 		Description     string          `json:"description,omitempty" doc:"Work item description"`
-		AssignedAgentID *string         `json:"assigned_agent_id" doc:"Assigned agent ID (empty string to unassign)"`
+		AssignedAgentID *string         `json:"assigned_agent_id,omitempty" doc:"Assigned agent ID (empty string to unassign)"`
 		Fields          json.RawMessage `json:"fields,omitempty" doc:"Custom fields"`
 	}
 }
