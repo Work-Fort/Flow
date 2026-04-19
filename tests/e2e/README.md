@@ -161,3 +161,35 @@ daemon, ensure your `stop` function joins them — the leak test will
 not catch goroutine leaks inside the test process.
 
 See `skills/lead/go-service-architecture/` for the canonical pattern.
+
+## MCP wire client
+
+The harness ships a `harness.MCPClient` that speaks JSON-RPC 2.0 over Flow's
+streaming-HTTP `/mcp` endpoint. Use
+`harness.NewMCPClient(env.Daemon.BaseURL()+"/mcp", "harness-service-token")`.
+Call `mc.Initialize()` before any `mc.Call(...)` — the MCP streamable-HTTP
+server requires the initialize handshake to establish a session. The client
+handles SSE, JSON, and 202 responses and follows `Mcp-Session-Id` automatically.
+**Do not import `mark3labs/mcp-go` from any test** — drift between the client and
+Flow's MCP server must surface as test failure (enforced by the `e2e-wire-only`
+depguard rule in `.golangci.yml`).
+
+## Webhook receiver tests
+
+Two webhook receivers are exercised end-to-end: `POST /v1/webhooks/sharkfin`
+(production) and `POST /v1/webhooks/combine` (production). Both auto-204. The
+Combine handler audits `push` and `pull_request_merged` to the existing
+audit-event store; other Combine event types are accepted but not audited. Tests
+build the Combine wire format inline — there is no Combine client in the harness.
+The `X-SoftServe-Event` header is the event-type discriminator, matching
+Combine's webhook format.
+
+## Bot lifecycle round-trip
+
+The `TestBotLifecycle_RoundTrip` test in `tests/e2e/bot_lifecycle_test.go` is
+the first end-to-end multi-system orchestration test. It simulates a project bot
+via raw HTTP into Flow, claims a pool agent from FakeHive, drives a 4-step
+workflow through transitions and approvals, fires a Combine merge webhook, and
+releases the agent. Asserts the audit-event sequence (`agent_claimed` →
+`agent_released`) on the workflow's audit log. Use this test as the template when
+the bot-vocabulary plan adds real bot processes.
