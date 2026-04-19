@@ -3,11 +3,14 @@ package nexus
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/Work-Fort/Flow/internal/domain"
 )
@@ -66,6 +69,31 @@ func New(cfg Config) *Driver {
 	}
 }
 
+// nexusName converts an arbitrary string into a valid Nexus drive/VM name:
+// only lowercase a-z, 0-9 and dashes; must start and end with a-z0-9;
+// max 24 characters. When the sanitized form would exceed 24 chars, the
+// first 16 sanitized chars are combined with a 7-char hex suffix derived
+// from the full input so that two distinct long names never collide.
+func nexusName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) <= 24 {
+		return out
+	}
+	// Preserve uniqueness via a short hash suffix.
+	h := sha256.Sum256([]byte(s))
+	suffix := fmt.Sprintf("%x", h[:4]) // 8 hex chars
+	prefix := strings.Trim(out[:15], "-")
+	return prefix + "-" + suffix
+}
+
 // StartAgentRuntime creates a fresh Nexus VM, attaches the creds
 // and work drives, and starts the VM. The returned RuntimeHandle
 // carries the Nexus VM ID. On any failure after VM creation, the
@@ -86,7 +114,7 @@ func (d *Driver) StartAgentRuntime(ctx context.Context, agentID string, creds, w
 		Name  string `json:"name"`
 		Image string `json:"image"`
 	}{
-		Name:  "agent-" + agentID,
+		Name:  nexusName("agent-" + agentID),
 		Image: d.cfg.VMImage,
 	}
 	var vm struct {
@@ -193,7 +221,7 @@ func (d *Driver) CloneWorkItemVolume(ctx context.Context, master domain.VolumeRe
 		Name            string `json:"name"`
 	}{
 		SourceVolumeRef: master.ID,
-		Name:            "work-item-" + workItemID,
+		Name:            nexusName("work-item-" + workItemID),
 	}
 	var resp struct {
 		ID string `json:"id"`
@@ -254,7 +282,7 @@ func (d *Driver) RefreshProjectMaster(ctx context.Context, projectID, _ string) 
 		Size      string `json:"size"`
 		MountPath string `json:"mount_path"`
 	}{
-		Name: "project-master-" + projectID,
+		Name: nexusName("project-master-" + projectID),
 		// TODO(plan: warming) — expose a per-project size knob.
 		// 1Gi is enough for the diag happy path and the typical
 		// claude-cli runtime image; the warming flow needs the
