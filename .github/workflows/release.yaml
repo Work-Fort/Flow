@@ -11,12 +11,28 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: flow_test
+          POSTGRES_PASSWORD: flow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - uses: jdx/mise-action@v3
       - run: mise run ci
+        env:
+          FLOW_DB: postgres://postgres:flow@127.0.0.1/flow_test?sslmode=disable
+          FLOW_E2E_PG_DSN: postgres://postgres:flow@127.0.0.1/flow_test?sslmode=disable
 
   tag:
     name: Create Version Tag
