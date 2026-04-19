@@ -164,7 +164,7 @@ func (s *Store) GetTemplate(ctx context.Context, id string) (*domain.WorkflowTem
 	// Transitions
 	trows, err := s.db.QueryContext(ctx,
 		`SELECT id, template_id, key, name, from_step_id, to_step_id, guard, required_role_id
-		FROM transitions WHERE template_id = $1`, id)
+		FROM transitions WHERE template_id = $1 ORDER BY id`, id)
 	if err != nil {
 		return nil, fmt.Errorf("list transitions: %w", err)
 	}
@@ -261,7 +261,18 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *domain.WorkflowTemplate) 
 		return fmt.Errorf("%w: template %q", domain.ErrNotFound, t.ID)
 	}
 
-	// Replace steps, transitions, role_mappings, integration_hooks
+	// Replace all sub-collections. DELETEs run in FK-safe reverse-dependency
+	// order (integration_hooks → role_mappings → transitions → steps) so
+	// FK constraints are not violated.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM integration_hooks WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete integration_hooks: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM role_mappings WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete role_mappings: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transitions WHERE template_id = $1", t.ID); err != nil {
+		return fmt.Errorf("delete transitions: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM steps WHERE template_id = $1", t.ID); err != nil {
 		return fmt.Errorf("delete steps: %w", err)
 	}
@@ -292,9 +303,6 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *domain.WorkflowTemplate) 
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM transitions WHERE template_id = $1", t.ID); err != nil {
-		return fmt.Errorf("delete transitions: %w", err)
-	}
 	for _, tr := range t.Transitions {
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO transitions (id, template_id, key, name, from_step_id, to_step_id, guard, required_role_id)
@@ -305,9 +313,6 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *domain.WorkflowTemplate) 
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM role_mappings WHERE template_id = $1", t.ID); err != nil {
-		return fmt.Errorf("delete role_mappings: %w", err)
-	}
 	for _, rm := range t.RoleMappings {
 		actionsJSON, _ := json.Marshal(rm.AllowedActions)
 		_, err = tx.ExecContext(ctx,
@@ -319,9 +324,6 @@ func (s *Store) UpdateTemplate(ctx context.Context, t *domain.WorkflowTemplate) 
 		}
 	}
 
-	if _, err := tx.ExecContext(ctx, "DELETE FROM integration_hooks WHERE template_id = $1", t.ID); err != nil {
-		return fmt.Errorf("delete integration_hooks: %w", err)
-	}
 	for _, h := range t.IntegrationHooks {
 		cfg := h.Config
 		if cfg == nil {

@@ -82,7 +82,42 @@ type PatchTemplateInput struct {
 	Body struct {
 		Name        string `json:"name,omitempty" doc:"Template name"`
 		Description string `json:"description,omitempty" doc:"Template description"`
+		// Steps, when non-nil, REPLACES the template's step set.
+		// Each Step's TemplateID is overwritten with the URL path's id.
+		// Mirrors store.UpdateTemplate's replace-on-write semantics.
+		Steps []stepInput `json:"steps,omitempty"`
+		// Transitions, when non-nil, REPLACES the template's transition
+		// set. Each Transition's TemplateID is overwritten with the
+		// URL path's id.
+		Transitions []transitionInput `json:"transitions,omitempty"`
 	}
+}
+
+// stepInput is the request-shape of Step.
+type stepInput struct {
+	ID       string             `json:"id" doc:"Step ID (client-supplied)"`
+	Key      string             `json:"key" doc:"Step key (unique within template)"`
+	Name     string             `json:"name" doc:"Step display name"`
+	Type     string             `json:"type" enum:"task,gate" doc:"Step type"`
+	Position int                `json:"position" doc:"Display order"`
+	Approval *stepApprovalInput `json:"approval,omitempty"`
+}
+
+type stepApprovalInput struct {
+	Mode              string `json:"mode" enum:"any,unanimous"`
+	RequiredApprovers int    `json:"required_approvers"`
+	ApproverRoleID    string `json:"approver_role_id"`
+	RejectionStepID   string `json:"rejection_step_id,omitempty"`
+}
+
+type transitionInput struct {
+	ID             string `json:"id" doc:"Transition ID (client-supplied)"`
+	Key            string `json:"key" doc:"Transition key"`
+	Name           string `json:"name" doc:"Display name"`
+	FromStepID     string `json:"from_step_id" doc:"Source step ID"`
+	ToStepID       string `json:"to_step_id" doc:"Destination step ID"`
+	Guard          string `json:"guard,omitempty" doc:"CEL guard expression"`
+	RequiredRoleID string `json:"required_role_id,omitempty"`
 }
 
 // --- instances ---

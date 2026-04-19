@@ -191,6 +191,36 @@ func registerTemplateRoutes(api huma.API, store domain.Store) {
 		if input.Body.Description != "" {
 			existing.Description = input.Body.Description
 		}
+		if input.Body.Steps != nil {
+			existing.Steps = make([]domain.Step, len(input.Body.Steps))
+			for i, s := range input.Body.Steps {
+				step := domain.Step{
+					ID: s.ID, TemplateID: input.ID, Key: s.Key,
+					Name: s.Name, Type: domain.StepType(s.Type),
+					Position: s.Position,
+				}
+				if s.Approval != nil {
+					step.Approval = &domain.ApprovalConfig{
+						Mode:              domain.ApprovalMode(s.Approval.Mode),
+						RequiredApprovers: s.Approval.RequiredApprovers,
+						ApproverRoleID:    s.Approval.ApproverRoleID,
+						RejectionStepID:   s.Approval.RejectionStepID,
+					}
+				}
+				existing.Steps[i] = step
+			}
+		}
+		if input.Body.Transitions != nil {
+			existing.Transitions = make([]domain.Transition, len(input.Body.Transitions))
+			for i, tr := range input.Body.Transitions {
+				existing.Transitions[i] = domain.Transition{
+					ID: tr.ID, TemplateID: input.ID, Key: tr.Key,
+					Name: tr.Name, FromStepID: tr.FromStepID,
+					ToStepID: tr.ToStepID, Guard: tr.Guard,
+					RequiredRoleID: tr.RequiredRoleID,
+				}
+			}
+		}
 		if err := store.UpdateTemplate(ctx, existing); err != nil {
 			return nil, mapDomainErr(err)
 		}
