@@ -3,7 +3,7 @@ type: plan
 step: "1"
 title: "Flow Nexus RuntimeDriver — real adapter for the seven-method port"
 status: pending
-assessment_status: needed
+assessment_status: complete
 provenance:
   source: roadmap
   issue_id: null
@@ -113,13 +113,23 @@ the future k8s driver replaces this one without re-architecting.
 
 ## Build commands
 
-- `mise run build` — builds the flow binary (verify driver compiles).
-- `mise run test` — root-module unit tests.
-- `mise run e2e` — e2e suite under `tests/e2e/`.
+`flow/lead/mise.toml` currently declares only `[tools]` (Go 1.26.0,
+golangci-lint v2.11.4) — there are no `[tasks.*]` entries yet. Task 9
+introduces the first set (`build`, `test`, `e2e`, `build:nexus-driver-test`,
+`e2e:nexus`). Until Task 9 lands, this plan uses raw `go` invocations:
+
+- Build: `go build -o build/flow .` (production binary, no tags).
+- Build (e2e tag): `go build -tags e2e -o build/flow-e2e .`.
+- Unit tests: `go test ./...` from repo root.
+- E2E tests (existing stub-driven suite): `cd tests/e2e && go test -v .`.
 - Targeted unit-test runs during TDD:
   - `go test -run TestNexusDriver ./internal/infra/runtime/nexus/...`
-- Targeted e2e runs:
-  - `cd tests/e2e && go test -run TestNexusDriver_E2E -v .`
+  - `go test -run TestClient ./internal/infra/runtime/nexus/...`
+- Targeted Nexus-driver e2e runs (Task 8 scenarios, after Task 9):
+  - `mise run e2e:nexus`
+  - or raw: `cd tests/e2e && FLOW_BINARY=$PWD/../../build/flow go test -tags nexus_e2e -run TestNexusDriver -v .`
+    (the `flow` binary MUST be built without the `e2e` tag for these
+    scenarios so the production NexusDriver wins over the stub.)
 
 ## Hard constraints
 
@@ -440,32 +450,67 @@ EOF
 **Rationale:** Every method needs the same JSON-over-HTTP plumbing.
 Centralizing it keeps each method body small and ensures the
 status→error mapping (404 → `domain.ErrNotFound`, 409 →
-`domain.ErrAlreadyExists` or `domain.ErrInvalidState`, etc.) is
-applied consistently. Domain error sentinels already exist in
-`internal/domain/errors.go` per the architecture skill's "error
-sentinels in domain, wrapping in infra" rule.
+`domain.ErrInvalidState`, etc.) is applied consistently per the
+architecture skill's "error sentinels in domain, wrapping in infra"
+rule.
 
-**Verification of domain error sentinels:** Run
-`grep -n '^var Err\|^var ErrNotFound\|errors.New' internal/domain/errors.go`.
-The driver maps as follows (additions to `errors.go` are NOT needed —
-the four sentinels below already exist for other ports' use):
+**Domain error sentinels — what exists, what is added.** Verified by
+reading `internal/domain/errors.go` at the plan's base commit:
 
-| Nexus status | Driver error                                        |
-|--------------|-----------------------------------------------------|
-| 200 / 201 / 204 | nil                                              |
-| 400          | `fmt.Errorf("nexus rejected: %s: %w", body, domain.ErrValidation)` |
-| 404          | `fmt.Errorf("nexus not found: %s: %w", body, domain.ErrNotFound)` |
-| 409          | `fmt.Errorf("nexus conflict: %s: %w", body, domain.ErrInvalidState)` |
-| 503          | `fmt.Errorf("nexus unavailable: %s: %w", body, domain.ErrUnavailable)` |
-| other        | `fmt.Errorf("nexus http %d: %s", status, body)`      |
+| Sentinel | Status before this task |
+|----------|-------------------------|
+| `ErrNotFound` | already exists |
+| `ErrAlreadyExists` | already exists |
+| `ErrRuntimeUnavailable` | already exists (Flow-specific: "runtime driver unavailable") |
+| `ErrValidation` | **does NOT exist — must be added in this task** |
+| `ErrInvalidState` | **does NOT exist — must be added in this task** |
 
-If any of `ErrValidation`, `ErrNotFound`, `ErrInvalidState`,
-`ErrUnavailable` is missing from `internal/domain/errors.go`, add it
-in this task with a one-line doc comment matching the existing
-sentinel style. Adding sentinels for status mapping is a legitimate
-domain need, not a leak — the sentinel exists in domain so the
-Scheduler / handler can check `errors.Is` without importing the
-driver.
+This task adds **two** new sentinels — `ErrValidation` and
+`ErrInvalidState` — to `internal/domain/errors.go`. The 503 status
+maps to the **existing** `ErrRuntimeUnavailable`; no new
+"`ErrUnavailable`" sentinel is introduced (using the existing one
+keeps surface area minimal and matches its docstring intent: "Flow's
+RuntimeDriver port returned a transient infra failure").
+
+The driver maps Nexus HTTP statuses to domain sentinels as follows:
+
+| Nexus status | Driver error                                                                  |
+|--------------|-------------------------------------------------------------------------------|
+| 200 / 201 / 204 | nil                                                                        |
+| 400          | `fmt.Errorf("nexus rejected: %s: %w", body, domain.ErrValidation)`            |
+| 404          | `fmt.Errorf("nexus not found: %s: %w", body, domain.ErrNotFound)`             |
+| 409          | `fmt.Errorf("nexus conflict: %s: %w", body, domain.ErrInvalidState)`          |
+| 503          | `fmt.Errorf("nexus unavailable: %s: %w", body, domain.ErrRuntimeUnavailable)` |
+| other        | `fmt.Errorf("nexus http %d: %s", status, body)`                               |
+
+Adding sentinels for status mapping is a legitimate domain need, not
+a leak — the sentinel exists in domain so any consumer (scheduler,
+handler, future k8s driver) can `errors.Is` without importing the
+driver. The two new sentinels are added explicitly in **Step 0**
+below before the failing client test, so test compilation does not
+hide the additions.
+
+**Step 0: Add the two new domain sentinels**
+
+Append to `internal/domain/errors.go` inside the existing `var (...)`
+block, ordered alongside `ErrNotFound`/`ErrAlreadyExists`:
+
+```go
+// ErrValidation is returned when an infra adapter receives an
+// HTTP 400 (or equivalent) from a downstream service — the request
+// was syntactically/semantically rejected. Used by the Nexus
+// runtime driver and any future HTTP-backed adapter.
+ErrValidation = errors.New("validation failed")
+
+// ErrInvalidState is returned when an infra adapter receives an
+// HTTP 409 (or equivalent) from a downstream service — the
+// requested operation is incompatible with the resource's current
+// state (e.g., trying to clone a drive whose source is attached).
+ErrInvalidState = errors.New("invalid state")
+```
+
+Run `go build ./internal/domain/...` to confirm the additions
+compile.
 
 **Step 1: Write the failing client test**
 
@@ -480,6 +525,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -594,8 +640,7 @@ func TestClient_PostJSON_BodyEncoding(t *testing.T) {
 	var got string
 	url := fakeNexus(t, map[string]http.HandlerFunc{
 		"POST /v1/drives/clone": func(w http.ResponseWriter, r *http.Request) {
-			b := make([]byte, r.ContentLength)
-			r.Body.Read(b)
+			b, _ := io.ReadAll(r.Body)
 			got = strings.TrimSpace(string(b))
 			w.WriteHeader(http.StatusCreated)
 			w.Write([]byte(`{}`))
@@ -607,9 +652,11 @@ func TestClient_PostJSON_BodyEncoding(t *testing.T) {
 	if !strings.Contains(got, `"name":"x"`) {
 		t.Errorf("posted body = %q, want to contain name=x", got)
 	}
-	// Also exercise the json encoder path (no panic on encoding success).
+	// Confirm the encoded body is valid JSON.
 	var sink any
-	_ = json.Unmarshal([]byte(got), &sink)
+	if err := json.Unmarshal([]byte(got), &sink); err != nil {
+		t.Errorf("posted body is not valid JSON: %v", err)
+	}
 }
 ```
 
@@ -664,7 +711,7 @@ func (d *Driver) statusErr(resp *http.Response) error {
 	case http.StatusConflict:
 		return fmt.Errorf("nexus conflict: %s: %w", bodyStr, domain.ErrInvalidState)
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("nexus unavailable: %s: %w", bodyStr, domain.ErrUnavailable)
+		return fmt.Errorf("nexus unavailable: %s: %w", bodyStr, domain.ErrRuntimeUnavailable)
 	default:
 		return fmt.Errorf("nexus http %d: %s", resp.StatusCode, bodyStr)
 	}
@@ -754,18 +801,10 @@ Run: `go test ./internal/infra/runtime/nexus/...`
 Expected: PASS for all 7 client tests + the interface-assertion test
 from Task 1.
 
-If `domain.ErrUnavailable` (or any other sentinel above) is
-undefined, compilation fails. In that case append to
-`internal/domain/errors.go`:
-
-```go
-// ErrUnavailable is returned when a downstream dependency is
-// momentarily unable to handle the request (HTTP 503 mapping at
-// infra boundaries).
-var ErrUnavailable = errors.New("unavailable")
-```
-
-with a one-line check first (`grep -n 'ErrUnavailable' internal/domain/errors.go`).
+The two sentinels added in Step 0 (`domain.ErrValidation`,
+`domain.ErrInvalidState`) plus the existing `domain.ErrNotFound` and
+`domain.ErrRuntimeUnavailable` carry the entire HTTP→error mapping;
+no further sentinel additions are needed.
 
 **Step 5: Commit**
 
@@ -778,10 +817,10 @@ method body stays focused on the domain mapping. The helpers wrap
 context propagation, optional bearer auth, and the canonical
 Nexus-status -> domain-sentinel translation:
 
-  400 -> ErrValidation
-  404 -> ErrNotFound
-  409 -> ErrInvalidState
-  503 -> ErrUnavailable
+  400 -> ErrValidation       (new sentinel in this commit)
+  404 -> ErrNotFound         (existing)
+  409 -> ErrInvalidState     (new sentinel in this commit)
+  503 -> ErrRuntimeUnavailable (existing)
 
 Tested against a per-test httptest.Server: success path, 404 -> 
 ErrNotFound, 409 -> ErrInvalidState, DELETE happy path, bearer
@@ -1375,7 +1414,13 @@ func (d *Driver) IsRuntimeAlive(ctx context.Context, h domain.RuntimeHandle) (bo
 	if h.Kind != RuntimeHandleKind {
 		return false, fmt.Errorf("h.Kind=%q: %w", h.Kind, ErrUnsupportedKind)
 	}
-	// Tighten the per-call ceiling per the port contract.
+	// Cap at 2s OR the caller's ctx deadline, whichever is sooner.
+	// context.WithTimeout returns a context whose deadline is the
+	// EARLIER of (now+2s, parent.Deadline()), so passing 2s here
+	// naturally inherits a tighter caller budget when the parent
+	// already has one — confirmed by
+	// TestIsRuntimeAlive_RespectsContextDeadline (50ms parent
+	// deadline wins over the 2s cap).
 	subCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	var vm struct {
@@ -1639,41 +1684,79 @@ cleanest split: the e2e variant
 two production paths are in the same file so a future second
 production driver finds an obvious place to land.
 
-**Step 1: Add the flag**
+**Step 1a: Verify `run()` current signature before changing it**
 
-In `cmd/daemon/daemon.go`:
-
-Add a new local var near the existing flag declarations (line 27-33):
-
+The current `run()` takes 9 string args (verified at
+`cmd/daemon/daemon.go:79`):
 ```go
-var nexusURL string
+func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhookBaseURL, hiveSvcName, sharkfinSvcName string) error
+```
+Adding `nexusURL` would push it to 10 args, which is a smell. This
+plan keeps it minimal — append `nexusURL` as the 10th arg rather
+than refactoring to a struct (the refactor is its own follow-up
+worth filing separately, not bundled here). The developer can confirm
+the signature is unchanged from what this plan describes by reading
+the current `cmd/daemon/daemon.go:79` before editing.
+
+**Step 1b: Add the flag and viper fallback in `daemon.go`**
+
+The exact end-state diff for `cmd/daemon/daemon.go` (against the
+current tip) is:
+
+```diff
+@@ NewCmd
+ 	var bind string
+ 	var port int
+ 	var db string
+ 	var passportURL string
+ 	var serviceToken string
+ 	var pylonURL string
+ 	var webhookBaseURL string
++	var nexusURL string
+
+ 	cmd := &cobra.Command{
+@@ RunE
+ 			if !cmd.Flags().Changed("webhook-base-url") {
+ 				webhookBaseURL = viper.GetString("webhook-base-url")
+ 			}
++			if !cmd.Flags().Changed("nexus-url") {
++				nexusURL = viper.GetString("nexus-url")
++			}
+ 
+ 			hiveSvcName := viper.GetString("pylon.services.hive")
+ 			sharkfinSvcName := viper.GetString("pylon.services.sharkfin")
+ 
+-			return run(bind, port, db, passportURL, serviceToken, pylonURL, webhookBaseURL, hiveSvcName, sharkfinSvcName)
++			return run(bind, port, db, passportURL, serviceToken, pylonURL, webhookBaseURL, nexusURL, hiveSvcName, sharkfinSvcName)
+ 		},
+ 	}
+@@ flags
+ 	cmd.Flags().StringVar(&webhookBaseURL, "webhook-base-url", "", "Flow's externally reachable base URL for webhook callbacks")
++	cmd.Flags().StringVar(&nexusURL, "nexus-url", "", "Nexus daemon REST URL (enables RuntimeDriver in production builds)")
+
+ 	return cmd
+ }
+
+-func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhookBaseURL, hiveSvcName, sharkfinSvcName string) error {
++func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhookBaseURL, nexusURL, hiveSvcName, sharkfinSvcName string) error {
+@@ after injectStubRuntime
+ 	injectStubRuntime(&serverCfg)
++	// Nexus driver is the production default; injectNexusRuntime is a
++	// no-op under //go:build e2e so the env-gated stub above still wins
++	// in e2e builds. serviceToken doubles as the Bearer credential the
++	// driver attaches on every Nexus REST call.
++	injectNexusRuntime(&serverCfg, nexusURL, serviceToken)
+ 	srv, sched := flowDaemon.NewServer(serverCfg)
 ```
 
-Add the flag-default block in the `RunE` body (matching the existing
-viper-fallback pattern, line 39-59):
-
-```go
-if !cmd.Flags().Changed("nexus-url") {
-    nexusURL = viper.GetString("nexus-url")
-}
-```
-
-Pass `nexusURL` into `run` — extend the `run` signature to take a
-`nexusURL` parameter, and route it into the new `injectNexusRuntime`
-helper after `injectStubRuntime` (which only does anything in
-e2e builds) so the e2e opt-in still wins.
-
-Register the flag near the existing `cmd.Flags().StringVar(...)`
-calls (line 68-74):
-
-```go
-cmd.Flags().StringVar(&nexusURL, "nexus-url", "", "Nexus daemon REST URL (enables RuntimeDriver)")
-```
-
-Update the `run(...)` body so that after `injectStubRuntime(...)`
-it also calls `injectNexusRuntime(&serverCfg, nexusURL, serviceToken)`
-— Nexus is only injected when `cfg.Runtime` is still nil (i.e., the
-e2e stub didn't claim it).
+Notes for the developer:
+- `serviceToken` is already declared as the Passport API key the
+  daemon uses for outbound auth (see line 31). Re-using it for
+  Nexus is correct — Nexus accepts Passport `Bearer` tokens via
+  the same scheme dispatch other consumers use.
+- `nexusURL` is positioned as the 8th `run()` arg (after
+  `webhookBaseURL`, before `hiveSvcName`) so the diff stays
+  minimal; both ends of the call site update together.
 
 **Step 2: Create the Nexus injector**
 
@@ -1762,10 +1845,10 @@ func injectNexusRuntime(_ *flowDaemon.ServerConfig, _, _ string) {}
 
 **Step 4: Verify the daemon builds in both flavors**
 
-Run:
+Run (mise tasks land in Task 9; this task uses raw `go` until then):
 - `go build ./cmd/daemon/...` (production / no tag)
 - `go build -tags e2e ./cmd/daemon/...` (e2e)
-- `mise run build` (full daemon binary)
+- `go build -o build/flow .` (full daemon binary)
 
 Expected: PASS in both. No warnings about unused parameters.
 
@@ -1830,14 +1913,10 @@ package harness
 
 import (
 	"bytes"
-	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -1907,8 +1986,6 @@ func StartNexusDaemon(t testing.TB) (baseURL string, stop func()) {
 		os.RemoveAll(xdgDir)
 		t.Fatalf("free port: %v", err)
 	}
-	host, portStr, _ := net.SplitHostPort(addr)
-	port, _ := strconv.Atoi(portStr)
 
 	stderrFile, err := os.CreateTemp("", "flow-nexus-stderr-*")
 	if err != nil {
@@ -1916,10 +1993,32 @@ func StartNexusDaemon(t testing.TB) (baseURL string, stop func()) {
 		t.Fatalf("create stderr temp: %v", err)
 	}
 
+	// Nexus's daemon CLI takes --listen <host:port> (single arg), NOT
+	// --bind/--port. Verified at nexus/lead/cmd/daemon.go:362 and used
+	// by Nexus's own e2e harness at
+	// nexus/lead/tests/e2e/harness/harness.go:150.
+	//
+	// We disable network/DNS and the quota helper:
+	//   --quota-helper ""        — nexus-quota requires CAP_SYS_ADMIN;
+	//                              btrfs subvol ops fail without it.
+	//                              Mirrors the Nexus e2e harness's own
+	//                              opt-out at nexus/lead/tests/e2e/
+	//                              nexus_test.go:130.
+	//   --network-enabled=false  — Flow driver v1 only exercises
+	//                              drive create + VM
+	//                              create+start+stop+delete; nothing
+	//                              needs CNI/bridge config.
+	//   --dns-enabled=false      — same reason; CoreDNS would expect
+	//                              nexus-dns helper with CAP_NET_BIND_SERVICE.
+	// Keeping these off makes the harness runnable from any directory
+	// on a btrfs filesystem without sudo or extra capabilities.
 	args := []string{
 		"daemon",
-		"--bind", host,
-		"--port", strconv.Itoa(port),
+		"--listen", addr,
+		"--log-level", "disabled",
+		"--quota-helper", "",
+		"--network-enabled=false",
+		"--dns-enabled=false",
 	}
 	cmd := exec.Command(binary, args...)
 	cmd.Env = append(os.Environ(),
@@ -1990,14 +2089,11 @@ func (d *NexusDaemon) stop(t testing.TB) {
 	}
 	os.RemoveAll(d.xdgDir)
 }
-
-// nexusDaemonSilenceUnused prevents the unused-import linter from
-// complaining when this file is the only consumer of strings.
-var _ = strings.TrimSpace
 ```
 
-(If `strings` ends up unused after the helper trims, remove the
-import; left in here as the daemon args may grow soon.)
+`freePort()` is the existing unexported helper at
+`tests/e2e/harness/daemon.go:224` (returns `127.0.0.1:N` for a
+free N) — same package, no extra import needed.
 
 **Step 2: Verify the helper compiles**
 
@@ -2065,18 +2161,21 @@ with that flag set to the spawned Nexus daemon's URL, AND it must
 NOT set `FLOW_E2E_RUNTIME_STUB=1` (which would let the stub claim
 the slot).
 
-The Flow harness binary is built **without** the `e2e` build tag
-in CI. But for these tests to actually drive the Nexus driver, the
-spawned `flow` binary must also be built without the e2e tag. The
-existing `mise run e2e` builds with `-tags e2e` (verify in the
-mise.toml task or by reading the existing `WithStubRuntime()` code
-path) — these scenarios are run from a separate `mise run e2e:nexus`
-task added in Task 9, OR the e2e harness builds a second
-non-e2e-tagged binary. **Decision: add a separate
-`FLOW_NEXUS_BINARY` env var** and a `mise run e2e:nexus` task that
-builds the binary without the e2e tag and runs only this test file.
-This avoids cross-contaminating the existing e2e suite (which
-relies on the env-gated stub).
+For these tests to actually drive the Nexus driver, the spawned
+`flow` binary must be built **without** the `e2e` tag (so the
+`runtime_nexus.go` injector runs, not the env-gated stub).
+
+The mise tasks added in Task 9 set this up explicitly:
+- `build` produces `build/flow` with no tags → consumed by
+  `e2e:nexus`.
+- `build:e2e` produces `build/flow-e2e` with `-tags e2e` → consumed
+  by the existing `e2e` task and the existing
+  `runtime_diag_test.go` etc.
+
+These scenarios live under the `nexus_e2e` build tag so they only
+run when explicitly requested (`mise run e2e:nexus`), avoiding
+cross-contamination with the existing `mise run e2e` suite that
+expects the stub-runtime path.
 
 **Step 1: Write the e2e test file**
 
@@ -2184,11 +2283,17 @@ func TestNexusDriver_CloneFromMissingProjectMasterErrors(t *testing.T) {
 // completes, we list Nexus's VMs/drives via the spawned daemon
 // directly to check the cleanup invariant.
 //
-// Skipped when curl-style direct Nexus access is unavailable;
-// covered by the Stop unit tests at the wire-shape level. The
-// follow-up is to add a small verification helper in the Nexus
-// daemon harness that lists VMs/drives without importing any
-// Nexus packages.
+// After both cycles run, the test directly queries the spawned
+// Nexus daemon (GET /v1/vms) to assert the VM count returned to
+// zero — proving StopAgentRuntime actually deletes the VM, not
+// just that the second cycle didn't conflict with the first.
+//
+// We do NOT inspect drives in the same way: master drives created
+// by RefreshProjectMaster are intentionally retained between
+// cycles (they ARE the project master) and clones created by
+// CloneWorkItemVolume are deleted via the diag /stop's
+// DeleteVolume call. So a drive count of 1 (the master) is the
+// invariant after both cycles.
 func TestNexusDriver_NoLeaksAcrossTwoCycles(t *testing.T) {
 	harness.RequireBtrfsForNexus(t)
 	nexusURL, _ := harness.StartNexusDaemon(t)
@@ -2226,10 +2331,43 @@ func TestNexusDriver_NoLeaksAcrossTwoCycles(t *testing.T) {
 			t.Fatalf("cycle %d stop status=%d body=%s", i, status, body)
 		}
 	}
-	// If we reach here both cycles ran clean. Direct Nexus
-	// inspection (list VMs/drives → expect empty after cleanup) is
-	// a follow-up; the test above already proves the wire calls
-	// don't error on the second cycle.
+
+	// Verify Nexus has zero VMs left — proves StartAgentRuntime's
+	// VM survives only between matching Start/Stop pairs.
+	hr, err := http.Get(nexusURL + "/v1/vms")
+	if err != nil {
+		t.Fatalf("list nexus vms: %v", err)
+	}
+	defer hr.Body.Close()
+	if hr.StatusCode != http.StatusOK {
+		t.Fatalf("list vms status=%d", hr.StatusCode)
+	}
+	var vms []map[string]any
+	if err := json.NewDecoder(hr.Body).Decode(&vms); err != nil {
+		t.Fatalf("decode vms: %v", err)
+	}
+	if len(vms) != 0 {
+		t.Errorf("after 2 cycles, want 0 VMs in Nexus, got %d: %v", len(vms), vms)
+	}
+
+	// Verify Nexus has exactly 1 drive — the project master, kept
+	// across cycles per RefreshProjectMaster's idempotent-create
+	// contract.
+	dr, err := http.Get(nexusURL + "/v1/drives")
+	if err != nil {
+		t.Fatalf("list nexus drives: %v", err)
+	}
+	defer dr.Body.Close()
+	if dr.StatusCode != http.StatusOK {
+		t.Fatalf("list drives status=%d", dr.StatusCode)
+	}
+	var drives []map[string]any
+	if err := json.NewDecoder(dr.Body).Decode(&drives); err != nil {
+		t.Fatalf("decode drives: %v", err)
+	}
+	if len(drives) != 1 {
+		t.Errorf("after 2 cycles, want 1 drive (project master) in Nexus, got %d: %v", len(drives), drives)
+	}
 }
 ```
 
@@ -2320,12 +2458,14 @@ EOF
 
 ---
 
-### Task 9: `mise run e2e:nexus` task + README update
+### Task 9: Introduce `mise.toml` tasks + `e2e:nexus` + README update
 
 **Depends on:** Task 8 (e2e file exists).
 
 **Files:**
-- Modify: `mise.toml` (add tasks)
+- Modify: `mise.toml` (introduces the first `[tasks.*]` entries in
+  the file — verified: `flow/lead/mise.toml` currently contains only
+  `[tools]`, no tasks)
 - Modify: `tests/e2e/README.md` (document the new task and env vars)
 
 **Rationale:** Per the planner conventions: "If the plan introduces
@@ -2334,31 +2474,52 @@ the plan MUST include a mise task to start it and documentation in
 the README. A dependency that requires developers to 'just know' to
 start it manually is a plan failure."
 
+This task ALSO seeds the base `build`, `test`, and `e2e` tasks the
+plan's "Build commands" section refers to. Until this commit lands,
+those commands rely on the raw `go ...` invocations called out at
+the top of this plan; from this point forward, `mise run build`
+etc. are the canonical entry points.
+
 **Step 1: Add mise tasks**
 
-Append to `mise.toml`:
+Append to `mise.toml` (whose current contents are exactly the
+8-line `[tools]` block, nothing else):
 
 ```toml
-[tasks."build:nexus-driver-test"]
-description = "Build the Flow binary WITHOUT the e2e tag for nexus_e2e tests"
-run = "go build -o build/flow-nexus-driver-test ."
+[tasks.build]
+description = "Build the production Flow binary"
+run = "go build -o build/flow ."
+
+[tasks.test]
+description = "Run unit tests"
+run = "go test ./..."
+
+[tasks.e2e]
+description = "Run the existing e2e suite (env-gated stub runtime)"
+depends = ["build:e2e"]
+env = { FLOW_BINARY = "build/flow-e2e" }
+run = "cd tests/e2e && go test -v ."
+
+[tasks."build:e2e"]
+description = "Build Flow with the e2e build tag (env-gated stub runtime injector)"
+run = "go build -tags e2e -o build/flow-e2e ."
 
 [tasks."e2e:nexus"]
-description = "Run the Flow Nexus driver e2e scenarios (requires nexus binary)"
-depends = ["build:nexus-driver-test"]
-env = { FLOW_BINARY = "build/flow-nexus-driver-test" }
+description = "Run the Flow Nexus driver e2e scenarios (requires nexus binary on PATH or NEXUS_BINARY)"
+depends = ["build"]
+env = { FLOW_BINARY = "build/flow" }
 run = "cd tests/e2e && go test -tags nexus_e2e -v -run TestNexusDriver ."
 ```
 
-If `mise.toml` already has a `[tasks]` table or `[tasks.build]`
-entry, place the new sections alongside the existing ones. If
-`mise run build` exists and produces `build/flow`, the
-`build:nexus-driver-test` task can be omitted in favor of reusing
-`build/flow` IF that build is done without the e2e tag — verify by
-reading the existing `[tasks.build]` entry (or the implicit go
-build logic) before deciding. If `mise run build` already produces
-a non-e2e-tagged binary, drop `build:nexus-driver-test` and just
-set `FLOW_BINARY = "build/flow"` in the `e2e:nexus` task.
+Notes:
+- `build` (no tag) is what `e2e:nexus` consumes — the production
+  Nexus driver wins over the stub only in non-e2e-tag builds.
+- `build:e2e` (e2e tag) is what the existing `e2e` task consumes —
+  preserves the env-gated stub-runtime path used by the existing
+  `runtime_diag_test.go` and other tests that opt in via
+  `harness.WithStubRuntimeEnv()`.
+- No separate `build:nexus-driver-test` task; the standard `build`
+  output (`build/flow`) is the right binary for `e2e:nexus`.
 
 **Step 2: Document in the e2e README**
 
@@ -2399,11 +2560,22 @@ nexus_e2e tag's tests under `tests/e2e/`.
 
 ```
 git commit -m "$(cat <<'EOF'
-chore(mise): add e2e:nexus task + document the dependency
+chore(mise): seed tasks and add e2e:nexus for the Nexus driver
 
-mise run e2e:nexus builds Flow without the e2e tag (so the
-production NexusDriver is wired), then runs the nexus_e2e-tagged
-scenarios under tests/e2e/.
+Introduces the first [tasks.*] entries in flow/lead/mise.toml
+(which previously declared only [tools]):
+
+  build        go build -o build/flow .
+  build:e2e    go build -tags e2e -o build/flow-e2e .
+  test         go test ./...
+  e2e          runs the existing stub-driven suite against
+               build/flow-e2e
+  e2e:nexus    runs the Nexus driver scenarios (tag nexus_e2e)
+               against build/flow (production runtime)
+
+mise run e2e:nexus builds Flow without the e2e tag so the
+production NexusDriver wins over the env-gated stub, then runs
+the nexus_e2e-tagged scenarios under tests/e2e/.
 
 README gains a "Nexus driver scenarios" section listing the two
 prerequisites (nexus binary on PATH or NEXUS_BINARY; btrfs working
