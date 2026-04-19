@@ -3,34 +3,15 @@
 "aqua:golangci/golangci-lint" = "2.11.4"
 go = "1.26.0"
 
-[tasks.build]
-description = "Build the production Flow binary"
-run = "go build -o build/flow ."
-
-[tasks.test]
-description = "Run unit tests"
-run = "go test ./..."
-
-[tasks.e2e]
-description = "Run the existing e2e suite (env-gated stub runtime)"
-depends = ["build:e2e"]
-env = { FLOW_BINARY = "build/flow-e2e" }
-run = "cd tests/e2e && go test -v ."
-
 [tasks."build:e2e"]
 description = "Build Flow with the e2e build tag (env-gated stub runtime injector)"
 run = "go build -tags e2e -o build/flow-e2e ."
 
 [tasks."e2e:nexus"]
 description = "Run the Flow Nexus driver e2e scenarios (requires nexus binary on PATH or NEXUS_BINARY)"
-depends = ["build"]
-env = { FLOW_BINARY = "build/flow" }
-run = "cd tests/e2e && go test -tags nexus_e2e -v -run TestNexusDriver ."
-
-[tasks.lint]
-description = "Run golangci-lint"
-run = "golangci-lint run ./..."
-
-[tasks.ci]
-description = "lint + unit tests + e2e (sqlite)"
-depends = ["lint", "test", "e2e"]
+depends = ["build:dev"]
+run = """
+REPO_ROOT=$(pwd)
+export FLOW_BINARY="$REPO_ROOT/build/flow"
+cd tests/e2e && go test -tags nexus_e2e -v -run TestNexusDriver ./...
+"""
