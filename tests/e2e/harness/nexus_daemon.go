@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -30,17 +31,91 @@ type NexusDaemon struct {
 // e2e test.
 func RequireNexusBinary(t testing.TB) string {
 	t.Helper()
+	var binary string
 	if p := os.Getenv("NEXUS_BINARY"); p != "" {
 		if _, err := os.Stat(p); err == nil {
-			return p
+			binary = p
+		} else {
+			t.Skipf("NEXUS_BINARY=%s does not exist; build nexus or unset the env to fall back to PATH", p)
 		}
-		t.Skipf("NEXUS_BINARY=%s does not exist; build nexus or unset the env to fall back to PATH", p)
+	} else if p, err := exec.LookPath("nexus"); err == nil {
+		binary = p
+	} else {
+		t.Skipf("nexus binary not found on PATH and NEXUS_BINARY unset; build nexus (cd ../../nexus/lead && mise run build) and set NEXUS_BINARY=/path/to/nexus")
 	}
-	if p, err := exec.LookPath("nexus"); err == nil {
-		return p
+	requireNexusCloneDriveEndpoint(t, binary)
+	return binary
+}
+
+// requireNexusCloneDriveEndpoint spins up a minimal Nexus daemon (no
+// btrfs, no caps — just enough to wire the HTTP router) and probes
+// POST /v1/drives/clone with an empty body. A 405 response means the
+// route does not exist in this binary (pre-CloneDrive); t.Skip is
+// called with an actionable message. Any other status (400/422 = bad
+// input = route registered) is treated as present. The probe daemon
+// uses /tmp for its XDG dirs since we only need the HTTP layer.
+func requireNexusCloneDriveEndpoint(t testing.TB, binary string) {
+	t.Helper()
+
+	addr, err := freePort()
+	if err != nil {
+		t.Skipf("probe: free port: %v", err)
 	}
-	t.Skipf("nexus binary not found on PATH and NEXUS_BINARY unset; build nexus (cd ../../nexus/lead && mise run build) and set NEXUS_BINARY=/path/to/nexus")
-	return ""
+	probeDir, err := os.MkdirTemp("", "nexus-probe-*")
+	if err != nil {
+		t.Skipf("probe: mkdir: %v", err)
+	}
+	defer os.RemoveAll(probeDir)
+
+	cmd := exec.Command(binary, "daemon",
+		"--listen", addr,
+		"--namespace", "nexus-clone-probe",
+		"--log-level", "disabled",
+		"--quota-helper", "",
+		"--network-enabled=false",
+		"--dns-enabled=false",
+	)
+	cmd.Env = append(os.Environ(),
+		"XDG_CONFIG_HOME="+filepath.Join(probeDir, "config"),
+		"XDG_STATE_HOME="+filepath.Join(probeDir, "state"),
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Skipf("probe: start nexus: %v", err)
+	}
+	defer func() {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			cmd.Wait() //nolint:errcheck
+		}
+	}()
+
+	// Wait for /health.
+	deadline := time.Now().Add(5 * time.Second)
+	client := &http.Client{Timeout: 300 * time.Millisecond}
+	for time.Now().Before(deadline) {
+		if resp, err := client.Get("http://" + addr + "/health"); err == nil {
+			resp.Body.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	resp, err := client.Post("http://"+addr+"/v1/drives/clone", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		// Daemon not responding — can't determine capability; let test proceed.
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		t.Skipf(
+			"Nexus binary at %s lacks POST /v1/drives/clone (got 405) — "+
+				"rebuild from nexus/lead at master and set NEXUS_BINARY, "+
+				"or run `cd ~/Work/WorkFort/nexus/lead && mise run install:local` "+
+				"to update the installed nexus",
+			binary,
+		)
+	}
 }
 
 // RequireBtrfsForNexus skips when the working directory is not on
