@@ -66,18 +66,117 @@ func New(cfg Config) *Driver {
 	}
 }
 
-// --- domain.RuntimeDriver method stubs (filled in by subsequent tasks) ---
+// StartAgentRuntime creates a fresh Nexus VM, attaches the creds
+// and work drives, and starts the VM. The returned RuntimeHandle
+// carries the Nexus VM ID. On any failure after VM creation, the
+// VM is deleted before returning the error so no orphan VM is left
+// in Nexus's pool.
+//
+// v1: a fresh VM per call. Pool reuse (tag=pool=claude-cli) is a
+// follow-up plan.
+func (d *Driver) StartAgentRuntime(ctx context.Context, agentID string, creds, work domain.VolumeRef) (domain.RuntimeHandle, error) {
+	if creds.Kind != VolumeKind {
+		return domain.RuntimeHandle{}, fmt.Errorf("creds.Kind=%q: %w", creds.Kind, ErrUnsupportedKind)
+	}
+	if work.Kind != VolumeKind {
+		return domain.RuntimeHandle{}, fmt.Errorf("work.Kind=%q: %w", work.Kind, ErrUnsupportedKind)
+	}
 
-func (d *Driver) StartAgentRuntime(_ context.Context, _ string, _ domain.VolumeRef, _ domain.VolumeRef) (domain.RuntimeHandle, error) {
-	return domain.RuntimeHandle{}, errors.New("nexus driver: StartAgentRuntime not yet implemented")
+	createBody := struct {
+		Name  string `json:"name"`
+		Image string `json:"image"`
+	}{
+		Name:  "agent-" + agentID,
+		Image: d.cfg.VMImage,
+	}
+	var vm struct {
+		ID string `json:"id"`
+	}
+	if err := d.postJSON(ctx, "/v1/vms", createBody, &vm); err != nil {
+		return domain.RuntimeHandle{}, fmt.Errorf("create vm: %w", err)
+	}
+
+	// From here on, any failure must clean up the VM to avoid leaking
+	// a partly-configured pool member. A delete failure on the
+	// cleanup path is logged in the wrapped error but does NOT
+	// override the original failure cause.
+	cleanupOnErr := func(origErr error) error {
+		if delErr := d.delete(context.Background(), "/v1/vms/"+vm.ID); delErr != nil &&
+			!errors.Is(delErr, domain.ErrNotFound) {
+			return fmt.Errorf("%w (cleanup of %s also failed: %v)", origErr, vm.ID, delErr)
+		}
+		return origErr
+	}
+
+	attachBody := struct {
+		VMID string `json:"vm_id"`
+	}{VMID: vm.ID}
+	if err := d.postJSON(ctx, "/v1/drives/"+creds.ID+"/attach", attachBody, nil); err != nil {
+		return domain.RuntimeHandle{}, cleanupOnErr(fmt.Errorf("attach creds: %w", err))
+	}
+	if err := d.postJSON(ctx, "/v1/drives/"+work.ID+"/attach", attachBody, nil); err != nil {
+		return domain.RuntimeHandle{}, cleanupOnErr(fmt.Errorf("attach work: %w", err))
+	}
+	if err := d.postJSON(ctx, "/v1/vms/"+vm.ID+"/start", nil, nil); err != nil {
+		return domain.RuntimeHandle{}, cleanupOnErr(fmt.Errorf("start vm: %w", err))
+	}
+
+	return domain.RuntimeHandle{Kind: RuntimeHandleKind, ID: vm.ID}, nil
 }
 
-func (d *Driver) StopAgentRuntime(_ context.Context, _ domain.RuntimeHandle) error {
-	return errors.New("nexus driver: StopAgentRuntime not yet implemented")
+// StopAgentRuntime stops the VM and then deletes it. Both calls are
+// best-effort against an already-stopped or already-deleted VM:
+// 404 and 409 from the stop call do not abort the delete; 404 from
+// the delete call is treated as success (idempotent).
+func (d *Driver) StopAgentRuntime(ctx context.Context, h domain.RuntimeHandle) error {
+	if h.Kind == "" && h.ID == "" {
+		return nil
+	}
+	if h.Kind != RuntimeHandleKind {
+		return fmt.Errorf("h.Kind=%q: %w", h.Kind, ErrUnsupportedKind)
+	}
+	if err := d.postJSON(ctx, "/v1/vms/"+h.ID+"/stop", nil, nil); err != nil {
+		// 404 (gone) and 409 (already stopped) are non-fatal — proceed
+		// to delete. Anything else fails fast.
+		if !errors.Is(err, domain.ErrNotFound) && !errors.Is(err, domain.ErrInvalidState) {
+			return err
+		}
+	}
+	if err := d.delete(ctx, "/v1/vms/"+h.ID); err != nil && !errors.Is(err, domain.ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
-func (d *Driver) IsRuntimeAlive(_ context.Context, _ domain.RuntimeHandle) (bool, error) {
-	return false, errors.New("nexus driver: IsRuntimeAlive not yet implemented")
+// IsRuntimeAlive reports true when the VM's state is "running". A
+// 404 (VM gone) is reported as (false, nil) — alive=false is the
+// correct answer for a missing runtime. The driver caps internal
+// network timeouts at the smaller of ctx's deadline and 2s per the
+// port contract; the cap is enforced via http.Client.Timeout in
+// New() (default 30s) plus the caller's ctx deadline.
+func (d *Driver) IsRuntimeAlive(ctx context.Context, h domain.RuntimeHandle) (bool, error) {
+	if h.Kind != RuntimeHandleKind {
+		return false, fmt.Errorf("h.Kind=%q: %w", h.Kind, ErrUnsupportedKind)
+	}
+	// Cap at 2s OR the caller's ctx deadline, whichever is sooner.
+	// context.WithTimeout returns a context whose deadline is the
+	// EARLIER of (now+2s, parent.Deadline()), so passing 2s here
+	// naturally inherits a tighter caller budget when the parent
+	// already has one — confirmed by
+	// TestIsRuntimeAlive_RespectsContextDeadline (50ms parent
+	// deadline wins over the 2s cap).
+	subCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var vm struct {
+		State string `json:"state"`
+	}
+	if err := d.getJSON(subCtx, "/v1/vms/"+h.ID, &vm); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return vm.State == "running", nil
 }
 
 // CloneWorkItemVolume issues POST /v1/drives/clone with a CSI-shaped

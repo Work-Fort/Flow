@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Work-Fort/Flow/internal/domain"
 )
@@ -130,5 +131,215 @@ func TestDeleteVolume_ZeroValueIsNoop(t *testing.T) {
 	d := New(Config{BaseURL: "http://nope.invalid"})
 	if err := d.DeleteVolume(context.Background(), domain.VolumeRef{}); err != nil {
 		t.Errorf("zero-value delete should be no-op, got %v", err)
+	}
+}
+
+func TestStartAgentRuntime_HappyPath(t *testing.T) {
+	var seq []string
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"POST /v1/vms": func(w http.ResponseWriter, r *http.Request) {
+			seq = append(seq, "create-vm")
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintln(w, `{"id":"vm_abc","name":"agent-a_007","state":"created"}`)
+		},
+		"POST /v1/drives/d_creds/attach": func(w http.ResponseWriter, r *http.Request) {
+			seq = append(seq, "attach-creds")
+			w.Write([]byte(`{"status":"ok"}`))
+		},
+		"POST /v1/drives/d_work/attach": func(w http.ResponseWriter, r *http.Request) {
+			seq = append(seq, "attach-work")
+			w.Write([]byte(`{"status":"ok"}`))
+		},
+		"POST /v1/vms/vm_abc/start": func(w http.ResponseWriter, r *http.Request) {
+			seq = append(seq, "start-vm")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+
+	d := New(Config{BaseURL: url, VMImage: "alpine"})
+	creds := domain.VolumeRef{Kind: VolumeKind, ID: "d_creds"}
+	work := domain.VolumeRef{Kind: VolumeKind, ID: "d_work"}
+	h, err := d.StartAgentRuntime(context.Background(), "a_007", creds, work)
+	if err != nil {
+		t.Fatalf("StartAgentRuntime: %v", err)
+	}
+	if h.Kind != RuntimeHandleKind {
+		t.Errorf("handle Kind = %q, want %q", h.Kind, RuntimeHandleKind)
+	}
+	if h.ID != "vm_abc" {
+		t.Errorf("handle ID = %q, want vm_abc", h.ID)
+	}
+	want := []string{"create-vm", "attach-creds", "attach-work", "start-vm"}
+	if len(seq) != len(want) {
+		t.Fatalf("call sequence = %v, want %v", seq, want)
+	}
+	for i, w := range want {
+		if seq[i] != w {
+			t.Errorf("seq[%d] = %q, want %q", i, seq[i], w)
+		}
+	}
+}
+
+func TestStartAgentRuntime_RejectsWrongKindCreds(t *testing.T) {
+	d := New(Config{BaseURL: "http://nope.invalid"})
+	_, err := d.StartAgentRuntime(context.Background(), "a_007",
+		domain.VolumeRef{Kind: "stub", ID: "x"},
+		domain.VolumeRef{Kind: VolumeKind, ID: "y"})
+	if !errors.Is(err, ErrUnsupportedKind) {
+		t.Errorf("err = %v, want ErrUnsupportedKind", err)
+	}
+}
+
+func TestStartAgentRuntime_AttachFailureCleansUpVM(t *testing.T) {
+	var deletedVMs []string
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"POST /v1/vms": func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintln(w, `{"id":"vm_xyz","state":"created"}`)
+		},
+		"POST /v1/drives/d_creds/attach": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "drive busy", http.StatusConflict)
+		},
+		"DELETE /v1/vms/vm_xyz": func(w http.ResponseWriter, r *http.Request) {
+			deletedVMs = append(deletedVMs, "vm_xyz")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	_, err := d.StartAgentRuntime(context.Background(), "a",
+		domain.VolumeRef{Kind: VolumeKind, ID: "d_creds"},
+		domain.VolumeRef{Kind: VolumeKind, ID: "d_work"})
+	if err == nil {
+		t.Fatal("expected attach failure to bubble up")
+	}
+	if len(deletedVMs) != 1 || deletedVMs[0] != "vm_xyz" {
+		t.Errorf("VM should be deleted on attach failure; deletedVMs=%v", deletedVMs)
+	}
+}
+
+func TestStopAgentRuntime_HappyPath(t *testing.T) {
+	var seq []string
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"POST /v1/vms/vm_abc/stop": func(w http.ResponseWriter, r *http.Request) {
+			seq = append(seq, "stop")
+			w.WriteHeader(http.StatusNoContent)
+		},
+		"DELETE /v1/vms/vm_abc": func(w http.ResponseWriter, r *http.Request) {
+			seq = append(seq, "delete")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	err := d.StopAgentRuntime(context.Background(),
+		domain.RuntimeHandle{Kind: RuntimeHandleKind, ID: "vm_abc"})
+	if err != nil {
+		t.Fatalf("StopAgentRuntime: %v", err)
+	}
+	want := []string{"stop", "delete"}
+	if len(seq) != 2 || seq[0] != want[0] || seq[1] != want[1] {
+		t.Errorf("seq = %v, want %v", seq, want)
+	}
+}
+
+func TestStopAgentRuntime_StopAlreadyStopped_StillDeletes(t *testing.T) {
+	var seq []string
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"POST /v1/vms/vm_abc/stop": func(w http.ResponseWriter, r *http.Request) {
+			seq = append(seq, "stop")
+			http.Error(w, "already stopped", http.StatusConflict)
+		},
+		"DELETE /v1/vms/vm_abc": func(w http.ResponseWriter, r *http.Request) {
+			seq = append(seq, "delete")
+			w.WriteHeader(http.StatusNoContent)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	err := d.StopAgentRuntime(context.Background(),
+		domain.RuntimeHandle{Kind: RuntimeHandleKind, ID: "vm_abc"})
+	if err != nil {
+		t.Errorf("idempotent stop should not error on already-stopped, got %v", err)
+	}
+	if len(seq) != 2 || seq[1] != "delete" {
+		t.Errorf("delete must run even when stop returns 409; seq=%v", seq)
+	}
+}
+
+func TestStopAgentRuntime_404IsIdempotent(t *testing.T) {
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"POST /v1/vms/vm_gone/stop": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+		"DELETE /v1/vms/vm_gone": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	err := d.StopAgentRuntime(context.Background(),
+		domain.RuntimeHandle{Kind: RuntimeHandleKind, ID: "vm_gone"})
+	if err != nil {
+		t.Errorf("404 stop+delete should be no-op, got %v", err)
+	}
+}
+
+func TestIsRuntimeAlive_RunningTrue(t *testing.T) {
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"GET /v1/vms/vm_abc": func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(w, `{"id":"vm_abc","state":"running"}`)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	alive, err := d.IsRuntimeAlive(context.Background(),
+		domain.RuntimeHandle{Kind: RuntimeHandleKind, ID: "vm_abc"})
+	if err != nil || !alive {
+		t.Errorf("alive=%v err=%v, want (true, nil)", alive, err)
+	}
+}
+
+func TestIsRuntimeAlive_StoppedFalse(t *testing.T) {
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"GET /v1/vms/vm_abc": func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(w, `{"id":"vm_abc","state":"stopped"}`)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	alive, err := d.IsRuntimeAlive(context.Background(),
+		domain.RuntimeHandle{Kind: RuntimeHandleKind, ID: "vm_abc"})
+	if err != nil || alive {
+		t.Errorf("alive=%v err=%v, want (false, nil)", alive, err)
+	}
+}
+
+func TestIsRuntimeAlive_404False(t *testing.T) {
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"GET /v1/vms/vm_gone": func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		},
+	})
+	d := New(Config{BaseURL: url})
+	alive, err := d.IsRuntimeAlive(context.Background(),
+		domain.RuntimeHandle{Kind: RuntimeHandleKind, ID: "vm_gone"})
+	if err != nil || alive {
+		t.Errorf("alive=%v err=%v, want (false, nil) on 404", alive, err)
+	}
+}
+
+func TestIsRuntimeAlive_RespectsContextDeadline(t *testing.T) {
+	// Per the port comment: "MUST NOT block indefinitely — drivers
+	// should cap internal timeouts at ctx's deadline or ~2s,
+	// whichever is smaller." A hung Nexus must not stall the
+	// scheduler's liveness sweep.
+	url := fakeNexus(t, map[string]http.HandlerFunc{
+		"GET /v1/vms/vm_slow": func(w http.ResponseWriter, r *http.Request) {
+			<-r.Context().Done() // mirror the client cancel
+		},
+	})
+	d := New(Config{BaseURL: url})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, _ = d.IsRuntimeAlive(ctx,
+		domain.RuntimeHandle{Kind: RuntimeHandleKind, ID: "vm_slow"})
+	if elapsed := time.Since(start); elapsed > 1*time.Second {
+		t.Errorf("IsRuntimeAlive blocked %v, want < 1s when ctx deadline is 50ms", elapsed)
 	}
 }
