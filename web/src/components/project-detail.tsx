@@ -2,6 +2,7 @@
 import { createSignal, Show } from 'solid-js';
 import type { Project, PatchProjectBody } from '../stores/projects';
 import { flowAPI } from '../client';
+import { BotPanel } from './bot-panel';
 
 interface Props {
   project: Project;
@@ -83,6 +84,8 @@ export function ProjectDetail(props: Props) {
         <dt style="color: var(--wf-color-text-muted);">Retention</dt>
         <dd>{props.project.retention_days != null ? `${props.project.retention_days} days` : 'Permanent'}</dd>
       </dl>
+
+      <BotPanel projectId={props.project.id} />
 
       {/* Edit dialog */}
       <wf-dialog ref={editDialogRef} header="Edit Project" on:wf-close={() => setEditing(false)}>
