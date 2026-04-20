@@ -56,6 +56,29 @@ func (f *fakeHive) RenewAgentLease(_ context.Context, _, _ string, _ int) error 
 	return f.renewErr
 }
 
+// noopAuditStore is a zero-cost domain.AuditEventStore for tests that
+// exercise scheduler/renewer mechanics rather than audit semantics.
+// RecordAuditEvent is a no-op; the List* methods return empty slices.
+// Use this in place of newAuditStore(t) when the test does not read
+// audit events back — it removes per-call SQLite I/O from the hot path.
+type noopAuditStore struct{}
+
+func (noopAuditStore) RecordAuditEvent(_ context.Context, _ *domain.AuditEvent) error {
+	return nil
+}
+
+func (noopAuditStore) ListAuditEventsByWorkflow(_ context.Context, _ string) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+
+func (noopAuditStore) ListAuditEventsByAgent(_ context.Context, _ string) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+
+func (noopAuditStore) ListAuditEventsByProject(_ context.Context, _ string) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+
 func newAuditStore(t *testing.T) domain.AuditEventStore {
 	t.Helper()
 	s, err := sqlite.Open("")
