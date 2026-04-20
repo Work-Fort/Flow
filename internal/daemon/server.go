@@ -19,6 +19,7 @@ import (
 
 	pylonclient "github.com/Work-Fort/Pylon/client/go"
 
+	botpkg "github.com/Work-Fort/Flow/internal/bot"
 	"github.com/Work-Fort/Flow/internal/domain"
 	hiveinfra "github.com/Work-Fort/Flow/internal/infra/hive"
 	sharkfininfra "github.com/Work-Fort/Flow/internal/infra/sharkfin"
@@ -109,6 +110,13 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	svc := workflow.New(cfg.Store, identityProvider)
 	if chatAdapter != nil {
 		svc = svc.WithChat(chatAdapter)
+	}
+
+	// Wire the bot dispatcher when Sharkfin is available and no override was
+	// injected by the caller (e.g. tests). The dispatcher is the only path
+	// that couples Store + ChatProvider to vocabulary events.
+	if cfg.Dispatcher == nil && chatAdapter != nil {
+		cfg.Dispatcher = botpkg.New(cfg.Store, chatAdapter)
 	}
 
 	var sch *scheduler.Scheduler

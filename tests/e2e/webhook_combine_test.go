@@ -68,3 +68,48 @@ func TestCombineWebhook_PushAndMergeFlowsThroughDaemon(t *testing.T) {
 		t.Errorf("ignored event status = %d, want 204; body=%s", status, body)
 	}
 }
+
+func TestCombineWebhook_MergeDispatchesToProjectChannel(t *testing.T) {
+	env := harness.NewEnv(t)
+	defer env.Cleanup(t)
+
+	tok := env.Daemon.SignJWT("svc-cw2", "flow-cw2", "Flow CW2", "service")
+	c := harness.NewClient(env.Daemon.BaseURL(), tok)
+
+	// Create a project whose name matches the Combine repo name.
+	// Default vocab is SDLC which defines the "merged" event.
+	var prj struct {
+		ID string `json:"id"`
+	}
+	if status, _, err := c.PostJSON("/v1/projects",
+		map[string]any{"name": "flow", "channel_name": "#flow"}, &prj); err != nil || status != 201 {
+		t.Fatalf("create project: status=%d err=%v", status, err)
+	}
+
+	// POST a pull_request_merged for repo "flow".
+	status, body := postCombineE2E(t, env, tok, "pull_request_merged", map[string]any{
+		"repository":   map[string]any{"name": "flow"},
+		"pull_request": map[string]any{"number": 42, "target_branch": "main"},
+		"sender":       map[string]any{"username": "agent-1"},
+	})
+	if status != http.StatusNoContent {
+		t.Fatalf("merge status = %d, want 204; body=%s", status, body)
+	}
+
+	msgs := env.Sharkfin.Messages()
+	var found bool
+	for _, m := range msgs {
+		if m.Channel == "#flow" {
+			found = true
+			if !bytesContains([]byte(m.Body), "Merged PR #42") {
+				t.Errorf("merge message body = %q, want to contain 'Merged PR #42'", m.Body)
+			}
+			if et, ok := m.Metadata["event_type"]; !ok || et != "merged" {
+				t.Errorf("metadata event_type = %v, want 'merged'", et)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("no message posted to #flow channel; messages = %+v", msgs)
+	}
+}
