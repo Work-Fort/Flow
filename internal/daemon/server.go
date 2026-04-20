@@ -4,6 +4,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	sharkfininfra "github.com/Work-Fort/Flow/internal/infra/sharkfin"
 	"github.com/Work-Fort/Flow/internal/scheduler"
 	"github.com/Work-Fort/Flow/internal/workflow"
+	flowweb "github.com/Work-Fort/Flow/web"
 )
 
 // PylonServices holds the Pylon-registered service names for each downstream dependency.
@@ -140,9 +142,18 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	registerVocabularyRoutes(api, cfg.Store)
 	registerProjectRoutes(api, cfg.Store, cfg.BotKeysDir)
 
+	// UI routes — /ui/health + /ui/* embedded SPA. Sub the //go:embed
+	// "dist" subdir to root the file server. fs.Sub returns an error
+	// only on invalid path; an empty embed.FS yields a valid (empty)
+	// fsys that fileExists("remoteEntry.js") returns false for, which
+	// is exactly the dev-mode signal Scope treats as "UI not built".
+	uiFS, err := fs.Sub(flowweb.Dist, "dist")
+	if err == nil {
+		registerUIRoutes(mux, uiFS)
+	}
+
 	// Health — raw handler (conditional status codes 200/218/503)
 	mux.HandleFunc("GET /v1/health", HandleHealth(cfg.Health))
-	mux.HandleFunc("GET /ui/health", HandleUIHealth())
 
 	// Sharkfin webhook receiver.
 	mux.Handle("POST /v1/webhooks/sharkfin", HandleSharkfinWebhook(nil))

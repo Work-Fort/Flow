@@ -179,15 +179,3 @@ func HandleHealth(health *HealthService) http.HandlerFunc {
 	}
 }
 
-// HandleUIHealth returns an http.HandlerFunc for Pylon service discovery.
-func HandleUIHealth() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{
-			"name":  "flow",
-			"label": "Flow",
-			"route": "/flow",
-		}) //nolint:errcheck
-	}
-}

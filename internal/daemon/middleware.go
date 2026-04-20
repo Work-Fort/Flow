@@ -13,7 +13,7 @@ func publicPathSkip(passport http.Handler, unprotected http.Handler) http.Handle
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/health",
-			r.URL.Path == "/ui/health",
+			strings.HasPrefix(r.URL.Path, "/ui/"),
 			r.URL.Path == "/openapi",
 			strings.HasPrefix(r.URL.Path, "/docs"):
 			unprotected.ServeHTTP(w, r)
