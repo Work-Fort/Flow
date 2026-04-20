@@ -90,8 +90,9 @@ func requireNexusCloneDriveEndpoint(t testing.TB, binary string) {
 		}
 	}()
 
-	// Wait for /health.
-	deadline := time.Now().Add(5 * time.Second)
+	// Wait for /health. 30s for the same CI parallel-load reason as
+	// flow daemon startup — see daemon.go:177.
+	deadline := time.Now().Add(30 * time.Second)
 	client := &http.Client{Timeout: 300 * time.Millisecond}
 	for time.Now().Before(deadline) {
 		if resp, err := client.Get("http://" + addr + "/health"); err == nil {
@@ -226,8 +227,9 @@ func StartNexusDaemon(t testing.TB) (baseURL string, stop func()) {
 		t.Fatalf("start nexus: %v", err)
 	}
 
-	// Wait for /health to respond.
-	deadline := time.Now().Add(5 * time.Second)
+	// Wait for /health to respond. 30s for the same CI parallel-load
+	// reason as flow daemon startup — see daemon.go:177.
+	deadline := time.Now().Add(30 * time.Second)
 	healthURL := "http://" + addr + "/health"
 	for time.Now().Before(deadline) {
 		client := &http.Client{Timeout: 200 * time.Millisecond}

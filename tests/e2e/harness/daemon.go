@@ -174,7 +174,12 @@ func StartDaemon(
 		stderrFile: stderrFile, signJWT: signJWT,
 	}
 
-	if err := waitReady(addr, 5*time.Second); err != nil {
+	// 30s, not 5s: under `mise run ci` the test, lint, and e2e jobs
+	// share a 2-core GitHub runner plus the Postgres service container;
+	// daemon startup (goose migrations + listener bind) overran 5s on
+	// run 24646023228. 30s is well below the test-binary outer timeout
+	// while absorbing CI scheduler jitter and PG contention.
+	if err := waitReady(addr, 30*time.Second); err != nil {
 		d.kill()
 		return nil, err
 	}
