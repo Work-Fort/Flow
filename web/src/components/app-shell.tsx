@@ -3,17 +3,21 @@ import { createSignal, Show } from 'solid-js';
 import { ProjectList } from './project-list';
 import { ProjectDetail } from './project-detail';
 import { ProjectCreateDialog } from './project-create-dialog';
+import { WorkItemList } from './work-item-list';
+import { WorkItemDetail } from './work-item-detail';
 import { createProjectsStore, type Project } from '../stores/projects';
 import { createVocabulariesStore } from '../stores/vocabularies';
+import type { WorkItem } from '../stores/work-items';
 
 type Screen = 'projects' | 'work-items' | 'agents' | 'audit';
 
 export function AppShell(props: { connected: boolean }) {
   const [screen, setScreen] = createSignal<Screen>('projects');
   const [selectedProject, setSelectedProject] = createSignal<Project | null>(null);
+  const [selectedWorkItem, setSelectedWorkItem] = createSignal<WorkItem | null>(null);
   const [createOpen, setCreateOpen] = createSignal(false);
 
-  const { projects, reload: reloadProjects, createProject } = createProjectsStore();
+  const { reload: reloadProjects, createProject } = createProjectsStore();
   const { vocabularies } = createVocabulariesStore();
 
   return (
@@ -59,9 +63,28 @@ export function AppShell(props: { connected: boolean }) {
             </div>
           </Show>
         </Show>
+
         <Show when={screen() === 'work-items'}>
-          <p>Work Items — select a project first.</p>
+          <Show when={selectedProject()} fallback={
+            <p style="color: var(--wf-color-text-muted);">Select a project in the Projects tab first.</p>
+          }>
+            <Show when={selectedWorkItem()} fallback={
+              <div>
+                <h2>Work Items — {selectedProject()!.name}</h2>
+                <WorkItemList
+                  projectId={selectedProject()!.id}
+                  onSelect={(wi) => setSelectedWorkItem(wi)}
+                />
+              </div>
+            }>
+              <WorkItemDetail
+                item={selectedWorkItem()!}
+                onBack={() => setSelectedWorkItem(null)}
+              />
+            </Show>
+          </Show>
         </Show>
+
         <Show when={screen() === 'agents'}>
           <p>Agent Pool</p>
         </Show>
