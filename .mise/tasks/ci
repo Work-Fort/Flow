@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-2.0-only
-#MISE description="Run all CI checks (single-backend; CI workflow runs the matrix)"
-#MISE depends=["lint", "test", "e2e"]
+#MISE description="Run all CI checks serially (lint -> test -> e2e). The CI workflow's matrix runs the same children in parallel jobs; release.yaml runs this single-job aggregator and depends on serial execution to avoid PG/daemon contention."
 set -euo pipefail
+
+mise run lint
+mise run test
+mise run e2e
