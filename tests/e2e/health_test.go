@@ -2,6 +2,7 @@
 package e2e_test
 
 import (
+	"bytes"
 	"net/http"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestHealth_LivenessReturns200(t *testing.T) {
 	}
 }
 
-func TestHealth_UIHealthReturns200(t *testing.T) {
+func TestHealth_UIHealthReturnsManifest(t *testing.T) {
 	env := harness.NewEnv(t)
 	defer env.Cleanup(t)
 
@@ -42,7 +43,12 @@ func TestHealth_UIHealthReturns200(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get /ui/health: %v", err)
 	}
-	if status != http.StatusOK {
+	// 200 when UI is embedded (-tags ui), 503 when not. Either is valid here.
+	if status != http.StatusOK && status != http.StatusServiceUnavailable {
 		t.Fatalf("/ui/health status=%d body=%s", status, body)
+	}
+	// Either way, the manifest JSON must be present.
+	if !bytes.Contains(body, []byte(`"name":"flow"`)) {
+		t.Errorf("/ui/health body missing manifest: %s", body)
 	}
 }

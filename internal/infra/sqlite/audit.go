@@ -93,6 +93,53 @@ func (s *Store) ListAuditEventsByAgent(ctx context.Context, agentID string) ([]*
 	return scanAuditEvents(rows)
 }
 
+// ListAuditEventsFiltered returns events matching all non-zero fields in f.
+// Builds the WHERE clause incrementally; the planner picks the most-selective
+// single-column index. Limit 0 = no limit.
+func (s *Store) ListAuditEventsFiltered(ctx context.Context, f domain.AuditFilter) ([]*domain.AuditEvent, error) {
+	query := "SELECT " + auditCols + " FROM audit_events WHERE 1=1"
+	var args []any
+	if f.Project != "" {
+		query += " AND project = ?"
+		args = append(args, f.Project)
+	}
+	if f.WorkflowID != "" {
+		query += " AND workflow_id = ?"
+		args = append(args, f.WorkflowID)
+	}
+	if f.AgentID != "" {
+		query += " AND agent_id = ?"
+		args = append(args, f.AgentID)
+	}
+	if f.EventType != "" {
+		query += " AND event_type = ?"
+		args = append(args, f.EventType)
+	}
+	if !f.Since.IsZero() {
+		query += " AND occurred_at >= ?"
+		args = append(args, f.Since.UTC())
+	}
+	if !f.Until.IsZero() {
+		query += " AND occurred_at <= ?"
+		args = append(args, f.Until.UTC())
+	}
+	query += " ORDER BY occurred_at ASC, id ASC"
+	if f.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, f.Limit)
+	}
+	if f.Offset > 0 {
+		query += " OFFSET ?"
+		args = append(args, f.Offset)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query audit_events filtered: %w", err)
+	}
+	defer rows.Close()
+	return scanAuditEvents(rows)
+}
+
 func scanAuditEvents(rows *sql.Rows) ([]*domain.AuditEvent, error) {
 	var out []*domain.AuditEvent
 	for rows.Next() {

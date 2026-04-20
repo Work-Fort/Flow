@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"time"
 )
 
 type TemplateStore interface {
@@ -91,6 +92,20 @@ type ChatProvider interface {
 	JoinChannel(ctx context.Context, channel string) error
 }
 
+// AuditFilter is the combined filter for ListAuditEventsFiltered.
+// Empty/zero-valued fields are ignored. Limit 0 = no limit (handler
+// caps at 500). Offset supports pagination.
+type AuditFilter struct {
+	Project    string
+	WorkflowID string
+	AgentID    string
+	EventType  string    // matches AuditEvent.Type; empty = all types
+	Since      time.Time // zero = no lower bound
+	Until      time.Time // zero = no upper bound
+	Limit      int       // 0 = no limit (handler caps at 500)
+	Offset     int       // pagination offset, 0 = start
+}
+
 // AuditEventStore persists AuditEvent records. Every scheduler claim,
 // release, and renewal writes one event.
 type AuditEventStore interface {
@@ -109,6 +124,10 @@ type AuditEventStore interface {
 	// ListAuditEventsByProject returns every event for a project (matched
 	// by the project's name field on AgentClaim), oldest first.
 	ListAuditEventsByProject(ctx context.Context, project string) ([]*AuditEvent, error)
+
+	// ListAuditEventsFiltered returns events matching all non-zero fields
+	// of f, oldest first. Supports pagination via Limit + Offset.
+	ListAuditEventsFiltered(ctx context.Context, f AuditFilter) ([]*AuditEvent, error)
 }
 
 // RuntimeDriver abstracts the runtime that actually executes an agent's

@@ -83,6 +83,10 @@ func (noopAuditStore) ListAuditEventsByProject(_ context.Context, _ string) ([]*
 	return nil, nil
 }
 
+func (noopAuditStore) ListAuditEventsFiltered(_ context.Context, _ domain.AuditFilter) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+
 func newAuditStore(t *testing.T) domain.AuditEventStore {
 	t.Helper()
 	s, err := sqlite.Open("")

@@ -98,6 +98,10 @@ func (f *fakeStore) ListAuditEventsByAgent(_ context.Context, _ string) ([]*doma
 func (f *fakeStore) ListAuditEventsByProject(_ context.Context, _ string) ([]*domain.AuditEvent, error) {
 	panic("unimplemented")
 }
+
+func (f *fakeStore) ListAuditEventsFiltered(_ context.Context, _ domain.AuditFilter) ([]*domain.AuditEvent, error) {
+	panic("unimplemented")
+}
 func (f *fakeStore) GetProjectByName(_ context.Context, _ string) (*domain.Project, error) {
 	panic("unimplemented")
 }

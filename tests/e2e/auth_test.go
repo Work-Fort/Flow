@@ -131,19 +131,26 @@ func TestAuth_ApiKeyV1WithJWTReturns401(t *testing.T) {
 
 // TestAuth_PublicHealthSkipsAuth confirms /v1/health and /ui/health
 // remain reachable without any Authorization header. The publicPathSkip
-// branch in server.go:160 must still apply post-scheme-split.
+// branch in server.go must still apply post-scheme-split.
+// /ui/health returns 503 when no UI is embedded and 200 when embedded;
+// the auth test only asserts the endpoint is reachable (not 401/403).
 func TestAuth_PublicHealthSkipsAuth(t *testing.T) {
 	env := harness.NewEnv(t)
 	defer env.Cleanup(t)
 
 	c := harness.NewClientNoAuth(env.Daemon.BaseURL())
-	for _, p := range []string{"/v1/health", "/ui/health"} {
-		status, body, err := c.GetJSON(p, nil)
-		if err != nil {
-			t.Fatalf("%s: %v", p, err)
-		}
-		if status != http.StatusOK {
-			t.Errorf("%s status=%d body=%s, want 200", p, status, body)
-		}
+
+	// /v1/health must return 200.
+	if status, body, err := c.GetJSON("/v1/health", nil); err != nil {
+		t.Fatalf("/v1/health: %v", err)
+	} else if status != http.StatusOK {
+		t.Errorf("/v1/health status=%d body=%s, want 200", status, body)
+	}
+
+	// /ui/health must be reachable (not 401/403) — 503 is valid pre-embed.
+	if status, body, err := c.GetJSON("/ui/health", nil); err != nil {
+		t.Fatalf("/ui/health: %v", err)
+	} else if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		t.Errorf("/ui/health status=%d body=%s, want not 401/403", status, body)
 	}
 }

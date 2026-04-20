@@ -31,6 +31,10 @@ func (c *captureAudit) ListAuditEventsByProject(context.Context, string) ([]*dom
 	return nil, nil
 }
 
+func (c *captureAudit) ListAuditEventsFiltered(context.Context, domain.AuditFilter) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+
 func postCombine(t *testing.T, h http.Handler, event string, payload any) *httptest.ResponseRecorder {
 	t.Helper()
 	b, _ := json.Marshal(payload)
