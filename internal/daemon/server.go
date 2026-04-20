@@ -63,6 +63,10 @@ type ServerConfig struct {
 	// webhook skip outbound chat posts and continue with audit-only
 	// behaviour.
 	Dispatcher domain.BotDispatcher
+
+	// Chat is the optional ChatProvider injected for auto-provisioning
+	// Sharkfin channels on project create. When nil, channel create is skipped.
+	Chat domain.ChatProvider
 }
 
 // NewServer creates and configures the HTTP server.
@@ -121,6 +125,12 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 		cfg.Dispatcher = botpkg.New(cfg.Store, chatAdapter)
 	}
 
+	// Populate cfg.Chat from the discovered Sharkfin adapter when not already
+	// injected (tests may inject their own ChatProvider via ServerConfig.Chat).
+	if cfg.Chat == nil && chatAdapter != nil {
+		cfg.Chat = chatAdapter
+	}
+
 	var sch *scheduler.Scheduler
 	if hiveAgentClient != nil {
 		sch = scheduler.New(scheduler.Config{
@@ -140,7 +150,7 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	registerRuntimeDiagRoutes(api, cfg.Runtime)
 	registerSchedulerAndAuditDiagRoutes(api, sch, cfg.Store)
 	registerVocabularyRoutes(api, cfg.Store)
-	registerProjectRoutes(api, cfg.Store, cfg.BotKeysDir)
+	registerProjectRoutes(api, cfg.Store, cfg.BotKeysDir, cfg.Chat)
 	registerAgentRoutes(api, hiveAgentClient)
 	registerAuditRoutes(api, cfg.Store)
 

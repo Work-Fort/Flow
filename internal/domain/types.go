@@ -194,12 +194,13 @@ type VolumeRef struct {
 type AuditEventType string
 
 const (
-	AuditEventAgentClaimed          AuditEventType = "agent_claimed"
-	AuditEventAgentReleased         AuditEventType = "agent_released"
-	AuditEventLeaseRenewed          AuditEventType = "lease_renewed"
-	AuditEventLeaseExpiredBySweeper AuditEventType = "lease_expired_by_sweeper"
-	AuditEventCombinePushReceived   AuditEventType = "combine_push_received"
-	AuditEventCombineMergeReceived  AuditEventType = "combine_merge_received"
+	AuditEventAgentClaimed                AuditEventType = "agent_claimed"
+	AuditEventAgentReleased               AuditEventType = "agent_released"
+	AuditEventLeaseRenewed                AuditEventType = "lease_renewed"
+	AuditEventLeaseExpiredBySweeper       AuditEventType = "lease_expired_by_sweeper"
+	AuditEventCombinePushReceived         AuditEventType = "combine_push_received"
+	AuditEventCombineMergeReceived        AuditEventType = "combine_merge_received"
+	AuditEventProjectChannelCreateFailed  AuditEventType = "project_channel_create_failed"
 )
 
 // AuditEvent is a single durable record of an agent-pool lifecycle

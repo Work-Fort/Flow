@@ -6,12 +6,13 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/charmbracelet/log"
 	"github.com/danielgtaylor/huma/v2"
 
 	"github.com/Work-Fort/Flow/internal/domain"
 )
 
-func registerProjectRoutes(api huma.API, store domain.Store, botKeysDir string) {
+func registerProjectRoutes(api huma.API, store domain.Store, botKeysDir string, chat domain.ChatProvider) {
 	huma.Register(api, huma.Operation{
 		OperationID: "list-projects",
 		Method:      http.MethodGet,
@@ -56,6 +57,17 @@ func registerProjectRoutes(api huma.API, store domain.Store, botKeysDir string) 
 		}
 		if err := store.CreateProject(ctx, p); err != nil {
 			return nil, mapDomainErr(err)
+		}
+		// Auto-provision Sharkfin channel after the project row commits.
+		if chat != nil && !input.Body.ChannelAlreadyExists {
+			if err := chat.CreateChannel(ctx, input.Body.ChannelName, true); err != nil {
+				log.Warn("sharkfin channel create failed; project committed, channel skipped",
+					"project", p.ID, "channel", input.Body.ChannelName, "err", err)
+				_ = store.RecordAuditEvent(ctx, &domain.AuditEvent{
+					Type:    domain.AuditEventProjectChannelCreateFailed,
+					Project: p.Name,
+				})
+			}
 		}
 		created, err := store.GetProject(ctx, p.ID)
 		if err != nil {

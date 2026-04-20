@@ -284,11 +284,12 @@ type ProjectListOutput struct {
 
 type CreateProjectInput struct {
 	Body struct {
-		Name         string `json:"name" doc:"Project name" minLength:"1"`
-		Description  string `json:"description,omitempty" doc:"Project description"`
-		TemplateID   string `json:"template_id,omitempty" doc:"Workflow template ID"`
-		ChannelName  string `json:"channel_name" doc:"Sharkfin channel name" minLength:"1"`
-		VocabularyID string `json:"vocabulary_id,omitempty" doc:"Vocabulary ID (defaults to SDLC)"`
+		Name                 string `json:"name" doc:"Project name" minLength:"1"`
+		Description          string `json:"description,omitempty" doc:"Project description"`
+		TemplateID           string `json:"template_id,omitempty" doc:"Workflow template ID"`
+		ChannelName          string `json:"channel_name" doc:"Sharkfin channel name" minLength:"1"`
+		VocabularyID         string `json:"vocabulary_id,omitempty" doc:"Vocabulary ID (defaults to SDLC)"`
+		ChannelAlreadyExists bool   `json:"channel_already_exists,omitempty" doc:"Skip CreateChannel call (use when channel was already created)"`
 	}
 }
 
