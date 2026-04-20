@@ -3,6 +3,7 @@ import { createSignal, Show } from 'solid-js';
 import type { Project, PatchProjectBody } from '../stores/projects';
 import { flowAPI } from '../client';
 import { BotPanel } from './bot-panel';
+import { RetentionControls } from './retention-controls';
 
 interface Props {
   project: Project;
@@ -86,6 +87,11 @@ export function ProjectDetail(props: Props) {
       </dl>
 
       <BotPanel projectId={props.project.id} />
+
+      <RetentionControls
+        project={props.project}
+        onUpdated={props.onUpdated}
+      />
 
       {/* Edit dialog */}
       <wf-dialog ref={editDialogRef} header="Edit Project" on:wf-close={() => setEditing(false)}>

@@ -24,6 +24,7 @@ type WfInputProps = WfBaseProps & {
 
 type WfSelectProps = WfBaseProps & {
   value?: string;
+  disabled?: boolean;
 };
 
 type WfListProps = WfBaseProps;
