@@ -3,6 +3,7 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Work-Fort/Flow/internal/domain"
 	"github.com/Work-Fort/Flow/internal/infra/postgres"
@@ -25,9 +27,33 @@ func dsn(t *testing.T) string {
 	return v
 }
 
+func resetSchema(t *testing.T, dsn string) {
+	t.Helper()
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("resetSchema open: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+        DROP SCHEMA IF EXISTS public CASCADE;
+        CREATE SCHEMA public;
+        GRANT ALL ON SCHEMA public TO PUBLIC;
+    `); err != nil {
+		t.Fatalf("resetSchema exec: %v", err)
+	}
+}
+
+// openTestStore returns a store backed by a freshly-reset PG schema.
+// Each call truncates all schema state, then runs migrations from
+// scratch. This makes every test independent of every other test in
+// the suite. Cost: ~30-60 ms per call on CI Postgres for the
+// drop/create + 3 goose migrations; acceptable for v1 (~13 tests in
+// this package, run sequentially within the suite).
 func openTestStore(t *testing.T) domain.Store {
 	t.Helper()
-	s, err := postgres.Open(dsn(t))
+	d := dsn(t)
+	resetSchema(t, d)
+	s, err := postgres.Open(d)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
