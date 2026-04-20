@@ -94,11 +94,35 @@ func (r *LeaseRenewer) Run(ctx context.Context) {
 // WaitIdle blocks until the renewer completes at least one renewOnce
 // after the call begins. Used by tests after sending a manual tick to
 // wait for the renewer to drain it. Production code does not call this.
+//
+// Deprecated: WaitIdle has a snapshot-after-signal race when renewOnce
+// completes before WaitIdle acquires the lock. Use CurrentTicks +
+// WaitForTick instead.
 func (r *LeaseRenewer) WaitIdle() {
 	r.idleMu.Lock()
 	defer r.idleMu.Unlock()
 	start := r.ticks
 	for r.ticks == start {
+		r.idleCond.Wait()
+	}
+}
+
+// CurrentTicks returns the number of completed renew cycles so far.
+// Pair with WaitForTick to write race-free tick-and-wait sequences.
+func (r *LeaseRenewer) CurrentTicks() uint64 {
+	r.idleMu.Lock()
+	defer r.idleMu.Unlock()
+	return r.ticks
+}
+
+// WaitForTick blocks until r.ticks >= target. Use it after sending
+// a tick to deterministically synchronize with the renewer goroutine,
+// avoiding the snapshot-after-signal race that WaitIdle alone is
+// vulnerable to in fast-signalIdle scenarios.
+func (r *LeaseRenewer) WaitForTick(target uint64) {
+	r.idleMu.Lock()
+	defer r.idleMu.Unlock()
+	for r.ticks < target {
 		r.idleCond.Wait()
 	}
 }
