@@ -1,0 +1,3 @@
+/* Layout-only. Spacing tokens come from @workfort/ui. */
+nav { display: flex; gap: var(--wf-space-sm); padding: var(--wf-space-md); }
+main { padding: var(--wf-space-md); }
