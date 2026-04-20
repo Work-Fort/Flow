@@ -136,6 +136,26 @@ without per-test API-key minting.
 CI sets `FLOW_E2E_PG_DSN` to its service-container address; locally,
 the default points at the host's `postgres` peer-trust user.
 
+### Running `mise run ci` locally
+
+`mise run ci` runs `mise run test` and `mise run e2e` in parallel.
+Both bind to Postgres; if they share a database they will race on
+schema state. Either:
+
+- **Recommended:** create a sibling DB and point the e2e harness at
+  it:
+
+  ```sh
+  createdb flow_e2e_test
+  export FLOW_DB=postgres://postgres@127.0.0.1/flow_test?sslmode=disable
+  export FLOW_E2E_PG_DSN=postgres://postgres@127.0.0.1/flow_e2e_test?sslmode=disable
+  mise run ci
+  ```
+
+- Or run them sequentially: `mise run test && mise run e2e`.
+
+The Release CI workflow uses the recommended split.
+
 ## Extending the harness
 
 If you need a new wire fixture (e.g., a Hive endpoint that doesn't
