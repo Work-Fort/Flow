@@ -115,6 +115,33 @@ func (s *Store) ListWorkItems(ctx context.Context, instanceID, stepID, agentID s
 	return items, rows.Err()
 }
 
+func (s *Store) ListWorkItemsByAgent(ctx context.Context, agentID string) ([]*domain.WorkItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, instance_id, title, description, current_step_id, assigned_agent_id, priority, fields, created_at, updated_at
+		FROM work_items
+		WHERE assigned_agent_id = ?
+		ORDER BY updated_at DESC, id ASC`, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("query work_items by agent: %w", err)
+	}
+	defer rows.Close()
+	return scanWorkItems(rows)
+}
+
+func scanWorkItems(rows *sql.Rows) ([]*domain.WorkItem, error) {
+	var items []*domain.WorkItem
+	for rows.Next() {
+		var w domain.WorkItem
+		var fieldsStr string
+		if err := rows.Scan(&w.ID, &w.InstanceID, &w.Title, &w.Description, &w.CurrentStepID, &w.AssignedAgentID, &w.Priority, &fieldsStr, &w.CreatedAt, &w.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan work_item: %w", err)
+		}
+		w.Fields = json.RawMessage(fieldsStr)
+		items = append(items, &w)
+	}
+	return items, rows.Err()
+}
+
 func (s *Store) UpdateWorkItem(ctx context.Context, w *domain.WorkItem) error {
 	fields := w.Fields
 	if fields == nil {

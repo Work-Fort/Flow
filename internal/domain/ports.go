@@ -27,6 +27,8 @@ type WorkItemStore interface {
 	GetWorkItem(ctx context.Context, id string) (*WorkItem, error)
 	// ListWorkItems filters by instanceID (required), stepID, agentID, priority (all optional except instanceID).
 	ListWorkItems(ctx context.Context, instanceID, stepID, agentID string, priority Priority) ([]*WorkItem, error)
+	// ListWorkItemsByAgent returns all work items assigned to the given agent across all instances.
+	ListWorkItemsByAgent(ctx context.Context, agentID string) ([]*WorkItem, error)
 	UpdateWorkItem(ctx context.Context, w *WorkItem) error
 
 	RecordTransition(ctx context.Context, h *TransitionHistory) error
@@ -38,6 +40,28 @@ type ApprovalStore interface {
 	ListApprovals(ctx context.Context, workItemID, stepID string) ([]*Approval, error)
 }
 
+type ProjectStore interface {
+	CreateProject(ctx context.Context, p *Project) error
+	GetProject(ctx context.Context, id string) (*Project, error)
+	GetProjectByName(ctx context.Context, name string) (*Project, error)
+	ListProjects(ctx context.Context) ([]*Project, error)
+	UpdateProject(ctx context.Context, p *Project) error
+	DeleteProject(ctx context.Context, id string) error
+}
+
+type BotStore interface {
+	CreateBot(ctx context.Context, b *Bot) error
+	GetBotByProject(ctx context.Context, projectID string) (*Bot, error)
+	DeleteBotByProject(ctx context.Context, projectID string) error
+}
+
+type VocabularyStore interface {
+	CreateVocabulary(ctx context.Context, v *Vocabulary) error
+	GetVocabulary(ctx context.Context, id string) (*Vocabulary, error)
+	GetVocabularyByName(ctx context.Context, name string) (*Vocabulary, error)
+	ListVocabularies(ctx context.Context) ([]*Vocabulary, error)
+}
+
 // Store combines all storage interfaces.
 type Store interface {
 	TemplateStore
@@ -45,6 +69,9 @@ type Store interface {
 	WorkItemStore
 	ApprovalStore
 	AuditEventStore
+	ProjectStore
+	BotStore
+	VocabularyStore
 	Ping(ctx context.Context) error
 	io.Closer
 }
@@ -77,6 +104,10 @@ type AuditEventStore interface {
 	// ListAuditEventsByAgent returns every event for an agent, oldest
 	// first.
 	ListAuditEventsByAgent(ctx context.Context, agentID string) ([]*AuditEvent, error)
+
+	// ListAuditEventsByProject returns every event for a project (matched
+	// by the project's name field on AgentClaim), oldest first.
+	ListAuditEventsByProject(ctx context.Context, project string) ([]*AuditEvent, error)
 }
 
 // RuntimeDriver abstracts the runtime that actually executes an agent's

@@ -9,6 +9,8 @@ import (
 
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
+
+	"github.com/Work-Fort/Flow/internal/domain"
 )
 
 //go:embed migrations/*.sql
@@ -53,3 +55,8 @@ func (s *Store) Ping(ctx context.Context) error {
 func (s *Store) Close() error {
 	return s.db.Close()
 }
+
+// Compile-time check: *Store satisfies the full domain.Store
+// aggregator. Updating the aggregator (Task 2) without implementing
+// the new methods (Tasks 3-4) breaks the build here.
+var _ domain.Store = (*Store)(nil)

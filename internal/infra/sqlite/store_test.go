@@ -3,6 +3,7 @@ package sqlite_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -362,5 +363,137 @@ func TestApprovalFlow(t *testing.T) {
 	}
 	if approvals[0].Decision != domain.ApprovalDecisionApproved {
 		t.Errorf("Decision mismatch: got %q, want approved", approvals[0].Decision)
+	}
+}
+
+func openTestStore(t *testing.T) domain.Store {
+	t.Helper()
+	s, err := sqlite.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
+
+func TestStore_ProjectCRUD(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+
+	voc := &domain.Vocabulary{
+		ID: "voc_t1", Name: "t1",
+		Events: []domain.VocabularyEvent{
+			{ID: "ve_1", VocabularyID: "voc_t1", EventType: "task_assigned", MessageTemplate: "x"},
+		},
+	}
+	if err := store.CreateVocabulary(ctx, voc); err != nil {
+		t.Fatalf("CreateVocabulary: %v", err)
+	}
+
+	p := &domain.Project{
+		ID: "prj_t1", Name: "flow", ChannelName: "#flow", VocabularyID: voc.ID,
+	}
+	if err := store.CreateProject(ctx, p); err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	got, err := store.GetProject(ctx, p.ID)
+	if err != nil || got.Name != "flow" {
+		t.Fatalf("GetProject: got=%v err=%v", got, err)
+	}
+
+	byName, err := store.GetProjectByName(ctx, "flow")
+	if err != nil || byName.ID != p.ID {
+		t.Fatalf("GetProjectByName: got=%v err=%v", byName, err)
+	}
+
+	// Duplicate name is rejected.
+	if err := store.CreateProject(ctx, &domain.Project{
+		ID: "prj_t2", Name: "flow", ChannelName: "#flow2", VocabularyID: voc.ID,
+	}); !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Errorf("expected ErrAlreadyExists for duplicate name, got %v", err)
+	}
+}
+
+func TestStore_BotCRUD(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	voc := &domain.Vocabulary{ID: "voc_b1", Name: "b1"}
+	_ = store.CreateVocabulary(ctx, voc)
+	_ = store.CreateProject(ctx, &domain.Project{
+		ID: "prj_b1", Name: "b1", ChannelName: "#b1", VocabularyID: voc.ID,
+	})
+	b := &domain.Bot{
+		ID: "bot_b1", ProjectID: "prj_b1",
+		PassportAPIKeyHash: "deadbeef", PassportAPIKeyID: "pak_1",
+		HiveRoleAssignments: []string{"developer", "reviewer"},
+	}
+	if err := store.CreateBot(ctx, b); err != nil {
+		t.Fatalf("CreateBot: %v", err)
+	}
+	if err := store.CreateBot(ctx, &domain.Bot{
+		ID: "bot_b2", ProjectID: "prj_b1", PassportAPIKeyHash: "x", PassportAPIKeyID: "pak_2",
+	}); !errors.Is(err, domain.ErrAlreadyExists) {
+		t.Errorf("expected one-bot-per-project conflict, got %v", err)
+	}
+	got, err := store.GetBotByProject(ctx, "prj_b1")
+	if err != nil || got.ID != "bot_b1" || len(got.HiveRoleAssignments) != 2 {
+		t.Fatalf("GetBotByProject: %v %v", got, err)
+	}
+}
+
+func TestStore_AuditByProject(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	_ = store.RecordAuditEvent(ctx, &domain.AuditEvent{
+		Type: domain.AuditEventAgentClaimed, AgentID: "a1", WorkflowID: "wf1", Project: "p1",
+	})
+	_ = store.RecordAuditEvent(ctx, &domain.AuditEvent{
+		Type: domain.AuditEventAgentClaimed, AgentID: "a2", WorkflowID: "wf2", Project: "p2",
+	})
+	got, err := store.ListAuditEventsByProject(ctx, "p1")
+	if err != nil || len(got) != 1 || got[0].AgentID != "a1" {
+		t.Fatalf("ListAuditEventsByProject: %v err=%v", got, err)
+	}
+}
+
+func seedTwoInstancesOneAgent(t *testing.T, store domain.Store, agentID string) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < 2; i++ {
+		tplID := newID("tpl")
+		stepID := newID("stp")
+		instID := newID("ins")
+		wiID := newID("wi")
+		_ = store.CreateTemplate(ctx, &domain.WorkflowTemplate{
+			ID: tplID, Name: fmt.Sprintf("tpl-%d", i), Version: 1,
+			Steps: []domain.Step{{ID: stepID, TemplateID: tplID, Key: "s", Name: "S", Type: domain.StepTypeTask, Position: 0}},
+		})
+		_ = store.CreateInstance(ctx, &domain.WorkflowInstance{
+			ID: instID, TemplateID: tplID, TemplateVersion: 1,
+			TeamID: "t", Name: fmt.Sprintf("inst-%d", i), Status: domain.InstanceStatusActive,
+		})
+		_ = store.CreateWorkItem(ctx, &domain.WorkItem{
+			ID: wiID, InstanceID: instID, Title: fmt.Sprintf("item-%d", i),
+			CurrentStepID: stepID, AssignedAgentID: agentID, Priority: domain.PriorityNormal,
+		})
+	}
+}
+
+func TestStore_ListWorkItemsByAgent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	seedTwoInstancesOneAgent(t, store, "agent-x")
+	items, err := store.ListWorkItemsByAgent(ctx, "agent-x")
+	if err != nil {
+		t.Fatalf("ListWorkItemsByAgent: %v", err)
+	}
+	if len(items) != 2 {
+		t.Errorf("expected 2 items across 2 instances, got %d", len(items))
+	}
+	for _, it := range items {
+		if it.AssignedAgentID != "agent-x" {
+			t.Errorf("item %s assigned to %s, want agent-x", it.ID, it.AssignedAgentID)
+		}
 	}
 }

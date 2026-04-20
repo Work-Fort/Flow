@@ -65,6 +65,20 @@ func (s *Store) ListAuditEventsByWorkflow(ctx context.Context, workflowID string
 	return scanAuditEvents(rows)
 }
 
+// ListAuditEventsByProject returns events for a project (by project name), oldest first.
+func (s *Store) ListAuditEventsByProject(ctx context.Context, project string) ([]*domain.AuditEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+auditCols+`
+		FROM audit_events
+		WHERE project = ?
+		ORDER BY occurred_at ASC, id ASC`, project)
+	if err != nil {
+		return nil, fmt.Errorf("query audit_events by project: %w", err)
+	}
+	defer rows.Close()
+	return scanAuditEvents(rows)
+}
+
 // ListAuditEventsByAgent returns events for an agent, oldest first.
 func (s *Store) ListAuditEventsByAgent(ctx context.Context, agentID string) ([]*domain.AuditEvent, error) {
 	rows, err := s.db.QueryContext(ctx, `
