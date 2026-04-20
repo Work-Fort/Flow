@@ -143,6 +143,38 @@ func (a *Adapter) RenewAgentLease(ctx context.Context, id, workflowID string, tt
 	return nil
 }
 
+// ListAgents implements domain.HiveAgentClient by proxying to
+// hiveclient.ListAgentsByAssignment. Idle agents arrive with a zero
+// LeaseExpiresAt; we convert that to nil *time.Time so JSON callers
+// see no field instead of "0001-01-01T00:00:00Z".
+func (a *Adapter) ListAgents(ctx context.Context, filter domain.HiveAgentFilter) ([]domain.HiveAgentRecord, error) {
+	agents, err := a.client.ListAgentsByAssignment(ctx,
+		filter.TeamID, filter.Assigned, filter.WorkflowID,
+		filter.Role, filter.Project)
+	if err != nil {
+		return nil, fmt.Errorf("hive list agents: %w", err)
+	}
+	out := make([]domain.HiveAgentRecord, 0, len(agents))
+	for _, ag := range agents {
+		rec := domain.HiveAgentRecord{
+			ID:                ag.ID,
+			Name:              ag.Name,
+			TeamID:            ag.TeamID,
+			Model:             ag.Model,
+			Runtime:           ag.Runtime,
+			CurrentRole:       ag.CurrentRole,
+			CurrentProject:    ag.CurrentProject,
+			CurrentWorkflowID: ag.CurrentWorkflowID,
+		}
+		if !ag.LeaseExpiresAt.IsZero() {
+			t := ag.LeaseExpiresAt
+			rec.LeaseExpiresAt = &t
+		}
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
 // Compile-time assertions.
 var _ domain.IdentityProvider = (*Adapter)(nil)
 var _ domain.HiveAgentClient = (*Adapter)(nil)

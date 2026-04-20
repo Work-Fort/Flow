@@ -44,6 +44,34 @@ type Scheduler interface {
 	ActiveClaims() []AgentClaim
 }
 
+// HiveAgentFilter mirrors the optional query params on Hive's
+// /v1/agents endpoint. Empty values omit the corresponding filter.
+type HiveAgentFilter struct {
+	TeamID     string
+	Assigned   string // "" | "true" | "false"
+	WorkflowID string
+	Role       string
+	Project    string
+}
+
+// HiveAgentRecord is a flattened view of a Hive Agent + its current
+// pool assignment, sufficient for the agent-pool view. Field names
+// mirror Hive client.Agent v0.3.0 verbatim (CurrentRole not
+// AssignedRole — the published module uses CurrentRole).
+type HiveAgentRecord struct {
+	ID                string
+	Name              string
+	TeamID            string
+	Model             string
+	Runtime           string
+	CurrentRole       string
+	CurrentProject    string
+	CurrentWorkflowID string
+	// nil when idle; *time.Time because encoding/json does not honour
+	// omitempty on a zero time.Time (zero serialises as "0001-01-01T00:00:00Z").
+	LeaseExpiresAt *time.Time
+}
+
 // HiveAgentClient is the slice of the Hive Go client the scheduler
 // depends on. Declared as an interface here so scheduler tests can
 // substitute a fake without importing the Hive client package.
@@ -51,6 +79,7 @@ type HiveAgentClient interface {
 	ClaimAgent(ctx context.Context, role, project, workflowID string, ttlSeconds int) (*HiveAgent, error)
 	ReleaseAgent(ctx context.Context, id, workflowID string) error
 	RenewAgentLease(ctx context.Context, id, workflowID string, ttlSeconds int) error
+	ListAgents(ctx context.Context, filter HiveAgentFilter) ([]HiveAgentRecord, error)
 }
 
 // HiveAgent mirrors the fields of github.com/Work-Fort/Hive/client.Agent

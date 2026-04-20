@@ -141,6 +141,7 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	registerSchedulerAndAuditDiagRoutes(api, sch, cfg.Store)
 	registerVocabularyRoutes(api, cfg.Store)
 	registerProjectRoutes(api, cfg.Store, cfg.BotKeysDir)
+	registerAgentRoutes(api, hiveAgentClient)
 
 	// UI routes — /ui/health + /ui/* embedded SPA. Sub the //go:embed
 	// "dist" subdir to root the file server. fs.Sub returns an error

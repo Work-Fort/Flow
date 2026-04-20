@@ -56,6 +56,10 @@ func (f *fakeHive) RenewAgentLease(_ context.Context, _, _ string, _ int) error 
 	return f.renewErr
 }
 
+func (f *fakeHive) ListAgents(_ context.Context, _ domain.HiveAgentFilter) ([]domain.HiveAgentRecord, error) {
+	return nil, nil
+}
+
 // noopAuditStore is a zero-cost domain.AuditEventStore for tests that
 // exercise scheduler/renewer mechanics rather than audit semantics.
 // RecordAuditEvent is a no-op; the List* methods return empty slices.

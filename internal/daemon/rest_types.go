@@ -389,3 +389,35 @@ type approvalResponse struct {
 type ApprovalListOutput struct {
 	Body []approvalResponse
 }
+
+// --- agents ---
+
+type AgentFilterInput struct {
+	TeamID     string `query:"team_id"`
+	Assigned   string `query:"assigned" enum:"true,false"`
+	WorkflowID string `query:"workflow_id"`
+	Role       string `query:"role"`
+	Project    string `query:"project"`
+}
+
+// agentResponse uses *time.Time for LeaseExpiresAt because
+// encoding/json does not honour omitempty on a zero time.Time.
+// Idle agents serialise LeaseExpiresAt as omitted; active agents
+// serialise it as an RFC3339 string.
+type agentResponse struct {
+	ID                string     `json:"id"`
+	Name              string     `json:"name"`
+	TeamID            string     `json:"team_id,omitempty"`
+	Model             string     `json:"model,omitempty"`
+	Runtime           string     `json:"runtime,omitempty"`
+	CurrentRole       string     `json:"current_role,omitempty"`
+	CurrentProject    string     `json:"current_project,omitempty"`
+	CurrentWorkflowID string     `json:"current_workflow_id,omitempty"`
+	LeaseExpiresAt    *time.Time `json:"lease_expires_at,omitempty"`
+}
+
+type AgentListOutput struct {
+	Body struct {
+		Agents []agentResponse `json:"agents"`
+	}
+}
