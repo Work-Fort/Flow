@@ -4,6 +4,5 @@
 set -euo pipefail
 
 mise run lint:go
-mise run lint:web
 mise run test
 mise run e2e

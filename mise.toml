@@ -3,6 +3,10 @@
 "aqua:golangci/golangci-lint" = "2.11.4"
 go = "1.26.0"
 
+[tasks.lint]
+description = "Lint Go source (CI path). For web type-checking run lint:web directly."
+depends = ["lint:go"]
+
 [tasks."build:e2e"]
 description = "Build Flow with the e2e build tag (env-gated stub runtime injector)"
 run = "go build -tags e2e -o build/flow-e2e ."
