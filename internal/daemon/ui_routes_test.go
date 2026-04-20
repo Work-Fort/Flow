@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -80,6 +81,25 @@ func TestUI_AssetsCacheImmutable(t *testing.T) {
 	}
 	if got := rr.Header().Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
 		t.Errorf("cache-control = %q", got)
+	}
+}
+
+func TestUI_UnknownPathFallsBackToIndexHTML(t *testing.T) {
+	fsys := fstest.MapFS{
+		"remoteEntry.js": &fstest.MapFile{Data: []byte("/* MF entry */")},
+		"index.html":     &fstest.MapFile{Data: []byte("<html>SPA</html>")},
+	}
+	mux := http.NewServeMux()
+	registerUIRoutes(mux, mustSub(t, fsys))
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ui/some/spa/route", nil)
+	mux.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (SPA fallback)", rr.Code)
+	}
+	if body := rr.Body.String(); !strings.Contains(body, "SPA") {
+		t.Errorf("body = %q, want index.html content", body)
 	}
 }
 

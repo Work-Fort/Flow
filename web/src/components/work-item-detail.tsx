@@ -13,15 +13,15 @@ export function WorkItemDetail(props: Props) {
   return (
     <div>
       <wf-button variant="text" on:click={props.onBack}>← Work Items</wf-button>
-      <h2>{props.item.title ?? props.item.id}</h2>
+      <h2>{props.item.title || props.item.id}</h2>
 
       <dl style="display: grid; grid-template-columns: max-content 1fr; gap: var(--wf-space-sm) var(--wf-space-md); margin-bottom: var(--wf-space-md);">
-        <dt style="color: var(--wf-color-text-muted);">Status</dt>
-        <dd>{props.item.status ?? '—'}</dd>
+        <dt style="color: var(--wf-color-text-muted);">Step</dt>
+        <dd>{props.item.current_step_id || '—'}</dd>
         <dt style="color: var(--wf-color-text-muted);">Assigned</dt>
-        <dd>{props.item.assigned_agent ?? '—'}</dd>
+        <dd>{props.item.assigned_agent_id || '—'}</dd>
         <dt style="color: var(--wf-color-text-muted);">Priority</dt>
-        <dd>{props.item.priority ?? '—'}</dd>
+        <dd>{props.item.priority || '—'}</dd>
         <dt style="color: var(--wf-color-text-muted);">Updated</dt>
         <dd>{new Date(props.item.updated_at).toLocaleString()}</dd>
       </dl>
@@ -33,14 +33,14 @@ export function WorkItemDetail(props: Props) {
           <For each={history()!}>
             {(entry) => (
               <wf-list-item>
-                <span>{entry.step_name}</span>
-                <Show when={entry.agent_id}>
+                <span>{entry.from_step_id} → {entry.to_step_id}</span>
+                <Show when={entry.triggered_by}>
                   <span style="color: var(--wf-color-text-muted); font-size: var(--wf-text-sm);">
-                    {entry.agent_id}
+                    {entry.triggered_by}
                   </span>
                 </Show>
                 <span style="color: var(--wf-color-text-muted); font-size: var(--wf-text-sm);">
-                  {new Date(entry.transitioned_at).toLocaleString()}
+                  {new Date(entry.timestamp).toLocaleString()}
                 </span>
               </wf-list-item>
             )}

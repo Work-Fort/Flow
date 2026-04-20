@@ -23,19 +23,19 @@ export function WorkItemList(props: Props) {
           <For each={workItems()!}>
             {(item) => (
               <wf-list-item on:wf-select={() => props.onSelect(item)}>
-                <span>{item.title ?? item.id}</span>
-                <Show when={item.status}>
+                <span>{item.title || item.id}</span>
+                <Show when={item.current_step_id}>
                   <wf-badge
                     data-wf="trailing"
                     count={undefined}
                     style="margin-left: var(--wf-space-sm);"
                   >
-                    {item.status}
+                    {item.current_step_id}
                   </wf-badge>
                 </Show>
-                <Show when={item.assigned_agent}>
+                <Show when={item.assigned_agent_id}>
                   <span style="color: var(--wf-color-text-muted); font-size: var(--wf-text-sm);">
-                    {item.assigned_agent}
+                    {item.assigned_agent_id}
                   </span>
                 </Show>
               </wf-list-item>

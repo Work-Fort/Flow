@@ -55,14 +55,14 @@ export function AuditLogView(props: Props) {
             {(event) => (
               <wf-list-item>
                 <span style="font-size: var(--wf-text-sm); color: var(--wf-color-text-muted);">
-                  {new Date(event.created_at).toLocaleString()}
+                  {new Date(event.occurred_at).toLocaleString()}
                 </span>
                 <wf-badge data-wf="trailing" style="margin: 0 var(--wf-space-sm);">
-                  {event.event_type}
+                  {event.type}
                 </wf-badge>
-                <Show when={event.project_id}>
+                <Show when={event.project}>
                   <span style="color: var(--wf-color-text-secondary); font-size: var(--wf-text-sm);">
-                    {event.project_id}
+                    {event.project}
                   </span>
                 </Show>
                 <Show when={event.agent_id}>

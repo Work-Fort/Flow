@@ -4,19 +4,25 @@ import { flowAPI } from '../client';
 
 export interface WorkItem {
   id: string;
-  title?: string;
-  status?: string;
-  assigned_agent?: string;
-  priority?: number;
   instance_id: string;
-  updated_at: string;
+  title: string;
+  description: string;
+  current_step_id: string;
+  assigned_agent_id?: string;
+  priority: string;
   created_at: string;
+  updated_at: string;
 }
 
 export interface WorkItemHistoryEntry {
-  step_name: string;
-  agent_id?: string;
-  transitioned_at: string;
+  id: string;
+  work_item_id: string;
+  from_step_id: string;
+  to_step_id: string;
+  transition_id: string;
+  triggered_by: string;
+  reason?: string;
+  timestamp: string;
 }
 
 export function createWorkItemsStore(projectId: () => string | null) {

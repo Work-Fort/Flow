@@ -10,12 +10,12 @@ export function AgentPoolView() {
   const filter = (): AgentFilter => ({
     assigned: filterAssigned(),
     role: filterRole() || undefined,
-    project_id: filterProject() || undefined,
+    project: filterProject() || undefined,
   });
 
   const { agents } = createAgentsStore(filter);
 
-  function leaseCountdown(expiresAt: string | undefined): string {
+  function leaseCountdown(expiresAt: string | null | undefined): string {
     if (!expiresAt) return '—';
     const diff = new Date(expiresAt).getTime() - Date.now();
     if (diff <= 0) return 'expired';
@@ -46,7 +46,7 @@ export function AgentPoolView() {
           on:input={(e: Event) => setFilterRole((e.target as HTMLInputElement).value)}
         />
         <wf-input
-          placeholder="Filter by project ID"
+          placeholder="Filter by project"
           value={filterProject()}
           on:input={(e: Event) => setFilterProject((e.target as HTMLInputElement).value)}
         />
@@ -67,7 +67,7 @@ export function AgentPoolView() {
                 </wf-badge>
                 <Show when={agent.assigned}>
                   <span style="color: var(--wf-color-text-muted); font-size: var(--wf-text-sm);">
-                    {agent.project_id} · {agent.role} · {leaseCountdown(agent.lease_expires_at)}
+                    {agent.current_project} · {agent.current_role} · {leaseCountdown(agent.lease_expires_at)}
                   </span>
                 </Show>
                 <Show when={agent.model}>

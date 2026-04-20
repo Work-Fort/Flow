@@ -55,6 +55,15 @@ func registerUIRoutes(mux *http.ServeMux, fsys fs.FS) {
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
 		}
+		// Probe whether the file exists before delegating to the file server.
+		// Unknown paths (SPA client-side routes) fall back to index.html so
+		// that browser refreshes on deep-links work correctly.
+		if path != "" && path != "index.html" && !strings.HasPrefix(path, "assets/") {
+			if _, err := fs.Stat(fsys, path); err != nil {
+				http.ServeFileFS(w, r, fsys, "index.html")
+				return
+			}
+		}
 		fileServer.ServeHTTP(w, r)
 	}))
 }

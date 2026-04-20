@@ -4,27 +4,33 @@ import { flowAPI } from '../client';
 
 export interface AgentEntry {
   id: string;
-  name?: string;
+  name: string;
+  team_id?: string;
   model?: string;
   runtime?: string;
-  assigned?: boolean;
-  project_id?: string;
-  role?: string;
-  workflow_id?: string;
-  lease_expires_at?: string;
+  current_role?: string;
+  current_project?: string;
+  current_workflow_id?: string;
+  lease_expires_at?: string | null;
+  // derived — not on the wire; computed in store
+  assigned: boolean;
 }
 
 export interface AgentFilter {
   assigned?: boolean;
   role?: string;
-  project_id?: string;
+  project?: string;
+}
+
+interface AgentListResponse {
+  agents: Omit<AgentEntry, 'assigned'>[];
 }
 
 function buildQuery(filter: AgentFilter): string {
   const params = new URLSearchParams();
   if (filter.assigned !== undefined) params.set('assigned', String(filter.assigned));
   if (filter.role) params.set('role', filter.role);
-  if (filter.project_id) params.set('project_id', filter.project_id);
+  if (filter.project) params.set('project', filter.project);
   const q = params.toString();
   return q ? `?${q}` : '';
 }
@@ -32,7 +38,13 @@ function buildQuery(filter: AgentFilter): string {
 export function createAgentsStore(filter: () => AgentFilter = () => ({}), pollMs = 5000) {
   const [agents, { refetch }] = createResource(
     filter,
-    (f) => flowAPI.get<AgentEntry[]>(`/v1/agents${buildQuery(f)}`)
+    async (f): Promise<AgentEntry[]> => {
+      const res = await flowAPI.get<AgentListResponse>(`/v1/agents${buildQuery(f)}`);
+      return (res.agents ?? []).map(a => ({
+        ...a,
+        assigned: a.lease_expires_at != null,
+      }));
+    }
   );
 
   const interval = setInterval(() => refetch(), pollMs);
