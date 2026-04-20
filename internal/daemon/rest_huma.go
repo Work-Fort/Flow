@@ -88,7 +88,7 @@ func templateHeaderToResponse(t *domain.WorkflowTemplate) templateResponse {
 func instanceToResponse(i *domain.WorkflowInstance) instanceResponse {
 	return instanceResponse{
 		ID: i.ID, TemplateID: i.TemplateID, TemplateVersion: i.TemplateVersion,
-		TeamID: i.TeamID, Name: i.Name, Status: string(i.Status),
+		TeamID: i.TeamID, ProjectID: i.ProjectID, Name: i.Name, Status: string(i.Status),
 		CreatedAt: i.CreatedAt, UpdatedAt: i.UpdatedAt,
 	}
 }
@@ -287,6 +287,7 @@ func registerInstanceRoutes(api huma.API, store domain.Store) {
 			TemplateID:      input.Body.TemplateID,
 			TemplateVersion: tmpl.Version,
 			TeamID:          input.Body.TeamID,
+			ProjectID:       input.Body.ProjectID,
 			Name:            input.Body.Name,
 			Status:          domain.InstanceStatusActive,
 		}

@@ -20,6 +20,7 @@ type InstanceStore interface {
 	CreateInstance(ctx context.Context, i *WorkflowInstance) error
 	GetInstance(ctx context.Context, id string) (*WorkflowInstance, error)
 	ListInstances(ctx context.Context, teamID string) ([]*WorkflowInstance, error)
+	ListInstancesByProject(ctx context.Context, projectID string) ([]*WorkflowInstance, error)
 	UpdateInstance(ctx context.Context, i *WorkflowInstance) error
 }
 
@@ -30,6 +31,8 @@ type WorkItemStore interface {
 	ListWorkItems(ctx context.Context, instanceID, stepID, agentID string, priority Priority) ([]*WorkItem, error)
 	// ListWorkItemsByAgent returns all work items assigned to the given agent across all instances.
 	ListWorkItemsByAgent(ctx context.Context, agentID string) ([]*WorkItem, error)
+	// ListWorkItemsByProject returns all work items for instances bound to the given project.
+	ListWorkItemsByProject(ctx context.Context, projectID string) ([]*WorkItem, error)
 	UpdateWorkItem(ctx context.Context, w *WorkItem) error
 
 	RecordTransition(ctx context.Context, h *TransitionHistory) error

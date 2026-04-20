@@ -31,9 +31,11 @@ func (s *Store) CreateInstance(ctx context.Context, i *domain.WorkflowInstance) 
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO workflow_instances (id, template_id, template_version, team_id, name, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		i.ID, i.TemplateID, i.TemplateVersion, i.TeamID, i.Name, string(i.Status), i.CreatedAt.UTC(), i.UpdatedAt.UTC())
+		`INSERT INTO workflow_instances (id, template_id, template_version, team_id, project_id, name, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		i.ID, i.TemplateID, i.TemplateVersion, i.TeamID,
+		sql.NullString{String: i.ProjectID, Valid: i.ProjectID != ""},
+		i.Name, string(i.Status), i.CreatedAt.UTC(), i.UpdatedAt.UTC())
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: instance %q", domain.ErrAlreadyExists, i.ID)
@@ -59,16 +61,18 @@ func (s *Store) CreateInstance(ctx context.Context, i *domain.WorkflowInstance) 
 
 func (s *Store) GetInstance(ctx context.Context, id string) (*domain.WorkflowInstance, error) {
 	var i domain.WorkflowInstance
+	var projectID sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, template_id, template_version, team_id, name, status, created_at, updated_at
+		`SELECT id, template_id, template_version, team_id, project_id, name, status, created_at, updated_at
 		FROM workflow_instances WHERE id = ?`, id,
-	).Scan(&i.ID, &i.TemplateID, &i.TemplateVersion, &i.TeamID, &i.Name, &i.Status, &i.CreatedAt, &i.UpdatedAt)
+	).Scan(&i.ID, &i.TemplateID, &i.TemplateVersion, &i.TeamID, &projectID, &i.Name, &i.Status, &i.CreatedAt, &i.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: instance %q", domain.ErrNotFound, id)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get instance: %w", err)
 	}
+	i.ProjectID = projectID.String
 	return &i, nil
 }
 
@@ -77,11 +81,11 @@ func (s *Store) ListInstances(ctx context.Context, teamID string) ([]*domain.Wor
 	var err error
 	if teamID == "" {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, template_id, template_version, team_id, name, status, created_at, updated_at
+			`SELECT id, template_id, template_version, team_id, project_id, name, status, created_at, updated_at
 			FROM workflow_instances ORDER BY created_at DESC`)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, template_id, template_version, team_id, name, status, created_at, updated_at
+			`SELECT id, template_id, template_version, team_id, project_id, name, status, created_at, updated_at
 			FROM workflow_instances WHERE team_id = ? ORDER BY created_at DESC`, teamID)
 	}
 	if err != nil {
@@ -91,13 +95,45 @@ func (s *Store) ListInstances(ctx context.Context, teamID string) ([]*domain.Wor
 
 	var instances []*domain.WorkflowInstance
 	for rows.Next() {
-		var i domain.WorkflowInstance
-		if err := rows.Scan(&i.ID, &i.TemplateID, &i.TemplateVersion, &i.TeamID, &i.Name, &i.Status, &i.CreatedAt, &i.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan instance: %w", err)
+		i, err := s.scanInstance(rows)
+		if err != nil {
+			return nil, err
 		}
-		instances = append(instances, &i)
+		instances = append(instances, i)
 	}
 	return instances, rows.Err()
+}
+
+func (s *Store) ListInstancesByProject(ctx context.Context, projectID string) ([]*domain.WorkflowInstance, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, template_id, template_version, team_id, project_id, name, status, created_at, updated_at
+		FROM workflow_instances WHERE project_id = ? ORDER BY created_at DESC`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list instances by project: %w", err)
+	}
+	defer rows.Close()
+	var out []*domain.WorkflowInstance
+	for rows.Next() {
+		i, err := s.scanInstance(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+type instanceRowScanner interface{ Scan(...any) error }
+
+func (s *Store) scanInstance(r instanceRowScanner) (*domain.WorkflowInstance, error) {
+	var i domain.WorkflowInstance
+	var projectID sql.NullString
+	if err := r.Scan(&i.ID, &i.TemplateID, &i.TemplateVersion, &i.TeamID, &projectID,
+		&i.Name, &i.Status, &i.CreatedAt, &i.UpdatedAt); err != nil {
+		return nil, fmt.Errorf("scan instance: %w", err)
+	}
+	i.ProjectID = projectID.String
+	return &i, nil
 }
 
 func (s *Store) UpdateInstance(ctx context.Context, i *domain.WorkflowInstance) error {

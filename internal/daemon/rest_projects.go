@@ -146,6 +146,50 @@ func registerProjectRoutes(api huma.API, store domain.Store, botKeysDir string, 
 		return nil, nil
 	})
 
+	// Per-project instance list
+	huma.Register(api, huma.Operation{
+		OperationID: "list-instances-by-project",
+		Method:      http.MethodGet,
+		Path:        "/v1/projects/{id}/instances",
+		Summary:     "List workflow instances bound to a project",
+		Tags:        []string{"Projects"},
+	}, func(ctx context.Context, input *IDPathInput) (*ProjectInstanceListOutput, error) {
+		if _, err := store.GetProject(ctx, input.ID); err != nil {
+			return nil, mapDomainErr(err)
+		}
+		instances, err := store.ListInstancesByProject(ctx, input.ID)
+		if err != nil {
+			return nil, mapDomainErr(err)
+		}
+		resp := make([]instanceResponse, len(instances))
+		for i, inst := range instances {
+			resp[i] = instanceToResponse(inst)
+		}
+		return &ProjectInstanceListOutput{Body: resp}, nil
+	})
+
+	// Per-project work-item list
+	huma.Register(api, huma.Operation{
+		OperationID: "list-work-items-by-project",
+		Method:      http.MethodGet,
+		Path:        "/v1/projects/{id}/work-items",
+		Summary:     "List work items for all instances bound to a project",
+		Tags:        []string{"Projects"},
+	}, func(ctx context.Context, input *IDPathInput) (*ProjectWorkItemListOutput, error) {
+		if _, err := store.GetProject(ctx, input.ID); err != nil {
+			return nil, mapDomainErr(err)
+		}
+		items, err := store.ListWorkItemsByProject(ctx, input.ID)
+		if err != nil {
+			return nil, mapDomainErr(err)
+		}
+		resp := make([]workItemResponse, len(items))
+		for i, w := range items {
+			resp[i] = workItemToResponse(w)
+		}
+		return &ProjectWorkItemListOutput{Body: resp}, nil
+	})
+
 	// Per-project audit endpoint
 	huma.Register(api, huma.Operation{
 		OperationID: "get-project-audit",

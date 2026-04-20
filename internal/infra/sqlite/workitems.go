@@ -128,6 +128,20 @@ func (s *Store) ListWorkItemsByAgent(ctx context.Context, agentID string) ([]*do
 	return scanWorkItems(rows)
 }
 
+func (s *Store) ListWorkItemsByProject(ctx context.Context, projectID string) ([]*domain.WorkItem, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT w.id, w.instance_id, w.title, w.description, w.current_step_id, w.assigned_agent_id, w.priority, w.fields, w.created_at, w.updated_at
+		FROM work_items w
+		JOIN workflow_instances i ON i.id = w.instance_id
+		WHERE i.project_id = ?
+		ORDER BY w.updated_at DESC, w.id ASC`, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("query work_items by project: %w", err)
+	}
+	defer rows.Close()
+	return scanWorkItems(rows)
+}
+
 func scanWorkItems(rows *sql.Rows) ([]*domain.WorkItem, error) {
 	var items []*domain.WorkItem
 	for rows.Next() {

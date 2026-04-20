@@ -94,11 +94,13 @@ func (s *minimalFakeStore) DeleteTemplate(context.Context, string) error { panic
 func (s *minimalFakeStore) CreateInstance(context.Context, *domain.WorkflowInstance) error { panic("unimplemented") }
 func (s *minimalFakeStore) GetInstance(context.Context, string) (*domain.WorkflowInstance, error) { panic("unimplemented") }
 func (s *minimalFakeStore) ListInstances(context.Context, string) ([]*domain.WorkflowInstance, error) { panic("unimplemented") }
+func (s *minimalFakeStore) ListInstancesByProject(context.Context, string) ([]*domain.WorkflowInstance, error) { panic("unimplemented") }
 func (s *minimalFakeStore) UpdateInstance(context.Context, *domain.WorkflowInstance) error { panic("unimplemented") }
 func (s *minimalFakeStore) CreateWorkItem(context.Context, *domain.WorkItem) error { panic("unimplemented") }
 func (s *minimalFakeStore) GetWorkItem(context.Context, string) (*domain.WorkItem, error) { panic("unimplemented") }
 func (s *minimalFakeStore) ListWorkItems(context.Context, string, string, string, domain.Priority) ([]*domain.WorkItem, error) { panic("unimplemented") }
 func (s *minimalFakeStore) ListWorkItemsByAgent(context.Context, string) ([]*domain.WorkItem, error) { panic("unimplemented") }
+func (s *minimalFakeStore) ListWorkItemsByProject(context.Context, string) ([]*domain.WorkItem, error) { panic("unimplemented") }
 func (s *minimalFakeStore) UpdateWorkItem(context.Context, *domain.WorkItem) error { panic("unimplemented") }
 func (s *minimalFakeStore) RecordTransition(context.Context, *domain.TransitionHistory) error { panic("unimplemented") }
 func (s *minimalFakeStore) GetTransitionHistory(context.Context, string) ([]*domain.TransitionHistory, error) { panic("unimplemented") }

@@ -100,6 +100,7 @@ type WorkflowInstance struct {
 	TemplateID         string              `json:"template_id"`
 	TemplateVersion    int                 `json:"template_version"`
 	TeamID             string              `json:"team_id"`
+	ProjectID          string              `json:"project_id,omitempty"`
 	Name               string              `json:"name"`
 	Status             InstanceStatus      `json:"status"`
 	IntegrationConfigs []IntegrationConfig `json:"integration_configs,omitempty"`

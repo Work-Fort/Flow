@@ -56,6 +56,9 @@ func (f *fakeStore) GetInstance(_ context.Context, _ string) (*domain.WorkflowIn
 func (f *fakeStore) ListInstances(_ context.Context, _ string) ([]*domain.WorkflowInstance, error) {
 	panic("unimplemented")
 }
+func (f *fakeStore) ListInstancesByProject(_ context.Context, _ string) ([]*domain.WorkflowInstance, error) {
+	panic("unimplemented")
+}
 func (f *fakeStore) UpdateInstance(_ context.Context, _ *domain.WorkflowInstance) error {
 	panic("unimplemented")
 }
@@ -69,6 +72,9 @@ func (f *fakeStore) ListWorkItems(_ context.Context, _, _, _ string, _ domain.Pr
 	panic("unimplemented")
 }
 func (f *fakeStore) ListWorkItemsByAgent(_ context.Context, _ string) ([]*domain.WorkItem, error) {
+	panic("unimplemented")
+}
+func (f *fakeStore) ListWorkItemsByProject(_ context.Context, _ string) ([]*domain.WorkItem, error) {
 	panic("unimplemented")
 }
 func (f *fakeStore) UpdateWorkItem(_ context.Context, _ *domain.WorkItem) error {

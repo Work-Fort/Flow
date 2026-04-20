@@ -127,6 +127,7 @@ type instanceResponse struct {
 	TemplateID      string    `json:"template_id"`
 	TemplateVersion int       `json:"template_version"`
 	TeamID          string    `json:"team_id"`
+	ProjectID       string    `json:"project_id,omitempty"`
 	Name            string    `json:"name"`
 	Status          string    `json:"status"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -149,6 +150,7 @@ type CreateInstanceInput struct {
 	Body struct {
 		TemplateID string `json:"template_id" doc:"Template ID" minLength:"1"`
 		TeamID     string `json:"team_id" doc:"Team ID" minLength:"1"`
+		ProjectID  string `json:"project_id,omitempty" doc:"Project ID (optional — links instance to a project)"`
 		Name       string `json:"name" doc:"Instance name" minLength:"1"`
 	}
 }
@@ -389,6 +391,14 @@ type ProjectAuditOutput struct {
 	Body struct {
 		Events []auditEventResponse `json:"events"`
 	}
+}
+
+type ProjectInstanceListOutput struct {
+	Body []instanceResponse
+}
+
+type ProjectWorkItemListOutput struct {
+	Body []workItemResponse
 }
 
 // --- approvals ---
