@@ -5,6 +5,7 @@ import { ProjectDetail } from './project-detail';
 import { ProjectCreateDialog } from './project-create-dialog';
 import { WorkItemList } from './work-item-list';
 import { WorkItemDetail } from './work-item-detail';
+import { AgentPoolView } from './agent-pool-view';
 import { createProjectsStore, type Project } from '../stores/projects';
 import { createVocabulariesStore } from '../stores/vocabularies';
 import type { WorkItem } from '../stores/work-items';
@@ -86,7 +87,7 @@ export function AppShell(props: { connected: boolean }) {
         </Show>
 
         <Show when={screen() === 'agents'}>
-          <p>Agent Pool</p>
+          <AgentPoolView />
         </Show>
         <Show when={screen() === 'audit'}>
           <p>Audit Log</p>
