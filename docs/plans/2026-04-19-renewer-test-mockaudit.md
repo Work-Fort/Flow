@@ -2,15 +2,15 @@
 type: plan
 step: "fix"
 title: "Use no-op audit store in TestRenewer_WaitIdleRaceUnderLoad"
-status: pending
-assessment_status: needed
+status: approved
+assessment_status: complete
 provenance:
   source: issue
   issue_id: null
   roadmap_step: null
 dates:
   created: "2026-04-19"
-  approved: null
+  approved: "2026-04-19"
   completed: null
 related_plans:
   - "2026-04-19-renewer-waitidle-flake.md"
@@ -27,7 +27,7 @@ related_plans:
 
 The test's purpose is to exercise `WaitIdle`/`signalIdle` race semantics — not audit-store throughput. Audit writes are I/O-bound, dominate the wall time, and contribute nothing to what the test asserts (renew-call count + bounded completion). Swapping the audit store in this one test for an in-memory no-op `domain.AuditEventStore` removes the I/O entirely.
 
-The other tests in the package (`TestRenewer_RenewsEveryActiveClaim`, `TestRenewer_DropsClaimOnMismatch`, the `TestScheduler_*` family) DO assert against the audit log via `audit.ListAuditEventsByWorkflow`. Those tests keep `newAuditStore(t)` unchanged.
+The `TestScheduler_*` family asserts against the audit log via `audit.ListAuditEventsByWorkflow` (`scheduler_test.go:98,113`); the two `TestRenewer_*` tests (`RenewsEveryActiveClaim`, `DropsClaimOnMismatch`) do not, but are left on `newAuditStore` because their write volume is trivial (~2-3 audit writes per test).
 
 ### Why a no-op mock and not real-but-faster
 
