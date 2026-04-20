@@ -29,10 +29,16 @@ jobs:
         with:
           fetch-depth: 0
       - uses: jdx/mise-action@v3
+      - name: Create e2e database
+        env:
+          PGPASSWORD: flow
+        run: |
+          psql -h 127.0.0.1 -U postgres -d flow_test \
+            -c 'CREATE DATABASE flow_e2e_test;'
       - run: mise run ci
         env:
           FLOW_DB: postgres://postgres:flow@127.0.0.1/flow_test?sslmode=disable
-          FLOW_E2E_PG_DSN: postgres://postgres:flow@127.0.0.1/flow_test?sslmode=disable
+          FLOW_E2E_PG_DSN: postgres://postgres:flow@127.0.0.1/flow_e2e_test?sslmode=disable
 
   tag:
     name: Create Version Tag
