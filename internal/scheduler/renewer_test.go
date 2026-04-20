@@ -46,13 +46,11 @@ func TestRenewer_RenewsEveryActiveClaim(t *testing.T) {
 
 	// Send three explicit ticks; assert exactly 2 (claims) * 3 (ticks)
 	// = 6 renew calls. Deterministic regardless of CI scheduling.
+	baseline := r.CurrentTicks()
 	for i := 0; i < 3; i++ {
 		tickCh <- time.Now()
 	}
-	// Give the renewer one scheduling slice to drain the last tick
-	// before we cancel; this is bounded, not racy — the renewer's
-	// processing loop is synchronous within a tick.
-	r.WaitIdle()
+	r.WaitForTick(baseline + 3)
 
 	cancel()
 	select {
@@ -94,8 +92,9 @@ func TestRenewer_DropsClaimOnMismatch(t *testing.T) {
 	wg.Add(1)
 	go func() { defer wg.Done(); r.Run(ctx) }()
 
+	baseline := r.CurrentTicks()
 	tickCh <- time.Now()
-	r.WaitIdle()
+	r.WaitForTick(baseline + 1)
 	cancel()
 	wg.Wait()
 
@@ -113,7 +112,7 @@ func TestRenewer_WaitIdleRaceUnderLoad(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	audit := newAuditStore(t)
+	audit := noopAuditStore{}
 	expiry := time.Now().UTC().Add(2 * time.Minute)
 	hive := &fakeHive{
 		claimResponses: []claimResp{
@@ -139,8 +138,9 @@ func TestRenewer_WaitIdleRaceUnderLoad(t *testing.T) {
 	go func() {
 		defer close(done)
 		for i := 0; i < iterations; i++ {
+			baseline := r.CurrentTicks()
 			tickCh <- time.Now()
-			r.WaitIdle()
+			r.WaitForTick(baseline + 1)
 		}
 	}()
 
