@@ -341,8 +341,8 @@ type CreateBotInput struct {
 // never returned by any other endpoint.
 type BotPlaintextOutput struct {
 	Body struct {
-		Bot            botResponse `json:"bot"`
-		PlaintextAPIKey string     `json:"plaintext_api_key,omitempty"`
+		Bot             botResponse `json:"bot"`
+		PlaintextAPIKey string      `json:"plaintext_api_key,omitempty"`
 	}
 }
 

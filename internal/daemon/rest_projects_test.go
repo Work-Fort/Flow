@@ -16,7 +16,6 @@ import (
 	"github.com/Work-Fort/Flow/internal/domain"
 )
 
-
 // minimalFakeStore satisfies domain.Store for project tests.
 // Only the methods exercised by registerProjectRoutes are implemented;
 // others panic so tests fail loudly if unexpected methods are called.
@@ -81,41 +80,97 @@ func (s *minimalFakeStore) GetVocabularyByName(_ context.Context, name string) (
 }
 
 // Unused methods — panic to catch accidental calls.
-func (s *minimalFakeStore) CreateBot(context.Context, *domain.Bot) error         { panic("unimplemented") }
-func (s *minimalFakeStore) GetBotByID(context.Context, string) (*domain.Bot, error)      { panic("unimplemented") }
-func (s *minimalFakeStore) GetBotByProject(context.Context, string) (*domain.Bot, error) { panic("unimplemented") }
-func (s *minimalFakeStore) DeleteBotByProject(context.Context, string) error              { panic("unimplemented") }
-func (s *minimalFakeStore) UpdateBot(context.Context, *domain.Bot) error                  { panic("unimplemented") }
-func (s *minimalFakeStore) CreateTemplate(context.Context, *domain.WorkflowTemplate) error { panic("unimplemented") }
-func (s *minimalFakeStore) GetTemplate(context.Context, string) (*domain.WorkflowTemplate, error) { panic("unimplemented") }
-func (s *minimalFakeStore) ListTemplates(context.Context) ([]*domain.WorkflowTemplate, error) { panic("unimplemented") }
-func (s *minimalFakeStore) UpdateTemplate(context.Context, *domain.WorkflowTemplate) error { panic("unimplemented") }
+func (s *minimalFakeStore) CreateBot(context.Context, *domain.Bot) error { panic("unimplemented") }
+func (s *minimalFakeStore) GetBotByID(context.Context, string) (*domain.Bot, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) GetBotByProject(context.Context, string) (*domain.Bot, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) DeleteBotByProject(context.Context, string) error { panic("unimplemented") }
+func (s *minimalFakeStore) UpdateBot(context.Context, *domain.Bot) error     { panic("unimplemented") }
+func (s *minimalFakeStore) CreateTemplate(context.Context, *domain.WorkflowTemplate) error {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) GetTemplate(context.Context, string) (*domain.WorkflowTemplate, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) ListTemplates(context.Context) ([]*domain.WorkflowTemplate, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) UpdateTemplate(context.Context, *domain.WorkflowTemplate) error {
+	panic("unimplemented")
+}
 func (s *minimalFakeStore) DeleteTemplate(context.Context, string) error { panic("unimplemented") }
-func (s *minimalFakeStore) CreateInstance(context.Context, *domain.WorkflowInstance) error { panic("unimplemented") }
-func (s *minimalFakeStore) GetInstance(context.Context, string) (*domain.WorkflowInstance, error) { panic("unimplemented") }
-func (s *minimalFakeStore) ListInstances(context.Context, string) ([]*domain.WorkflowInstance, error) { panic("unimplemented") }
-func (s *minimalFakeStore) ListInstancesByProject(context.Context, string) ([]*domain.WorkflowInstance, error) { panic("unimplemented") }
-func (s *minimalFakeStore) UpdateInstance(context.Context, *domain.WorkflowInstance) error { panic("unimplemented") }
-func (s *minimalFakeStore) CreateWorkItem(context.Context, *domain.WorkItem) error { panic("unimplemented") }
-func (s *minimalFakeStore) GetWorkItem(context.Context, string) (*domain.WorkItem, error) { panic("unimplemented") }
-func (s *minimalFakeStore) ListWorkItems(context.Context, string, string, string, domain.Priority) ([]*domain.WorkItem, error) { panic("unimplemented") }
-func (s *minimalFakeStore) ListWorkItemsByAgent(context.Context, string) ([]*domain.WorkItem, error) { panic("unimplemented") }
-func (s *minimalFakeStore) ListWorkItemsByProject(context.Context, string) ([]*domain.WorkItem, error) { panic("unimplemented") }
-func (s *minimalFakeStore) UpdateWorkItem(context.Context, *domain.WorkItem) error { panic("unimplemented") }
-func (s *minimalFakeStore) RecordTransition(context.Context, *domain.TransitionHistory) error { panic("unimplemented") }
-func (s *minimalFakeStore) GetTransitionHistory(context.Context, string) ([]*domain.TransitionHistory, error) { panic("unimplemented") }
-func (s *minimalFakeStore) RecordApproval(context.Context, *domain.Approval) error { panic("unimplemented") }
-func (s *minimalFakeStore) ListApprovals(context.Context, string, string) ([]*domain.Approval, error) { panic("unimplemented") }
+func (s *minimalFakeStore) CreateInstance(context.Context, *domain.WorkflowInstance) error {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) GetInstance(context.Context, string) (*domain.WorkflowInstance, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) ListInstances(context.Context, string) ([]*domain.WorkflowInstance, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) ListInstancesByProject(context.Context, string) ([]*domain.WorkflowInstance, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) UpdateInstance(context.Context, *domain.WorkflowInstance) error {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) CreateWorkItem(context.Context, *domain.WorkItem) error {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) GetWorkItem(context.Context, string) (*domain.WorkItem, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) ListWorkItems(context.Context, string, string, string, domain.Priority) ([]*domain.WorkItem, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) ListWorkItemsByAgent(context.Context, string) ([]*domain.WorkItem, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) ListWorkItemsByProject(context.Context, string) ([]*domain.WorkItem, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) UpdateWorkItem(context.Context, *domain.WorkItem) error {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) RecordTransition(context.Context, *domain.TransitionHistory) error {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) GetTransitionHistory(context.Context, string) ([]*domain.TransitionHistory, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) RecordApproval(context.Context, *domain.Approval) error {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) ListApprovals(context.Context, string, string) ([]*domain.Approval, error) {
+	panic("unimplemented")
+}
 func (s *minimalFakeStore) RecordAuditEvent(context.Context, *domain.AuditEvent) error { return nil }
-func (s *minimalFakeStore) ListAuditEventsByWorkflow(context.Context, string) ([]*domain.AuditEvent, error) { return nil, nil }
-func (s *minimalFakeStore) ListAuditEventsByAgent(context.Context, string) ([]*domain.AuditEvent, error) { return nil, nil }
-func (s *minimalFakeStore) ListAuditEventsByProject(context.Context, string) ([]*domain.AuditEvent, error) { return nil, nil }
-func (s *minimalFakeStore) ListAuditEventsFiltered(context.Context, domain.AuditFilter) ([]*domain.AuditEvent, error) { return nil, nil }
-func (s *minimalFakeStore) CreateVocabulary(context.Context, *domain.Vocabulary) error { panic("unimplemented") }
-func (s *minimalFakeStore) GetVocabulary(context.Context, string) (*domain.Vocabulary, error) { panic("unimplemented") }
-func (s *minimalFakeStore) ListVocabularies(context.Context) ([]*domain.Vocabulary, error) { return nil, nil }
+func (s *minimalFakeStore) ListAuditEventsByWorkflow(context.Context, string) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+func (s *minimalFakeStore) ListAuditEventsByAgent(context.Context, string) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+func (s *minimalFakeStore) ListAuditEventsByProject(context.Context, string) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+func (s *minimalFakeStore) ListAuditEventsFiltered(context.Context, domain.AuditFilter) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
+func (s *minimalFakeStore) CreateVocabulary(context.Context, *domain.Vocabulary) error {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) GetVocabulary(context.Context, string) (*domain.Vocabulary, error) {
+	panic("unimplemented")
+}
+func (s *minimalFakeStore) ListVocabularies(context.Context) ([]*domain.Vocabulary, error) {
+	return nil, nil
+}
 func (s *minimalFakeStore) Ping(context.Context) error { return nil }
-func (s *minimalFakeStore) Close() error { return nil }
+func (s *minimalFakeStore) Close() error               { return nil }
 
 // fakeChat tracks CreateChannel calls for project handler tests.
 type fakeChat struct {

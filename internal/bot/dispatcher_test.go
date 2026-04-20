@@ -125,7 +125,7 @@ func (f *fakeStore) GetBotByProject(_ context.Context, _ string) (*domain.Bot, e
 	panic("unimplemented")
 }
 func (f *fakeStore) DeleteBotByProject(_ context.Context, _ string) error { panic("unimplemented") }
-func (f *fakeStore) UpdateBot(_ context.Context, _ *domain.Bot) error      { panic("unimplemented") }
+func (f *fakeStore) UpdateBot(_ context.Context, _ *domain.Bot) error     { panic("unimplemented") }
 func (f *fakeStore) CreateVocabulary(_ context.Context, _ *domain.Vocabulary) error {
 	panic("unimplemented")
 }

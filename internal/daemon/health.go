@@ -178,4 +178,3 @@ func HandleHealth(health *HealthService) http.HandlerFunc {
 		json.NewEncoder(w).Encode(report) //nolint:errcheck
 	}
 }
-

@@ -1,4 +1,5 @@
 //go:build !ui
+
 // SPDX-License-Identifier: GPL-2.0-only
 package web
 

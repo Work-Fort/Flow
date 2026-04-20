@@ -27,7 +27,7 @@ func (f *fakeHive) ListAgents(_ context.Context, filter domain.HiveAgentFilter) 
 func (f *fakeHive) ClaimAgent(context.Context, string, string, string, int) (*domain.HiveAgent, error) {
 	return nil, nil
 }
-func (f *fakeHive) ReleaseAgent(context.Context, string, string) error  { return nil }
+func (f *fakeHive) ReleaseAgent(context.Context, string, string) error         { return nil }
 func (f *fakeHive) RenewAgentLease(context.Context, string, string, int) error { return nil }
 
 func TestListAgents_PassesFiltersThrough(t *testing.T) {

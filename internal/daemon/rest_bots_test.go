@@ -140,9 +140,9 @@ func TestCreateBot_BYOKey_SkipsMint(t *testing.T) {
 	mux := newBotTestMux(t, store, fp)
 
 	rr := postJSON2(mux, "/v1/projects/prj_2/bot", map[string]any{
-		"bring_your_own_key":   true,
-		"passport_api_key":     "wf-svc_manual",
-		"passport_api_key_id":  "kid_manual",
+		"bring_your_own_key":  true,
+		"passport_api_key":    "wf-svc_manual",
+		"passport_api_key_id": "kid_manual",
 	})
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())

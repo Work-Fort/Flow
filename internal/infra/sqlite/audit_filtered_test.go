@@ -9,7 +9,7 @@ import (
 	"github.com/Work-Fort/Flow/internal/infra/sqlite"
 )
 
-func mustRecordAuditSQLite(t *testing.T, s *sqlite.Store, e *domain.AuditEvent) {
+func mustRecordAuditSQLite(t *testing.T, s domain.AuditEventStore, e *domain.AuditEvent) {
 	t.Helper()
 	if err := s.RecordAuditEvent(context.Background(), e); err != nil {
 		t.Fatalf("RecordAuditEvent: %v", err)
