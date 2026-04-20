@@ -230,3 +230,66 @@ func TestMCP_TransitionApproveReject(t *testing.T) {
 		t.Errorf("reject_work_item on non-gate step: expected error, got nil")
 	}
 }
+
+func TestMCP_ListMyWorkItems(t *testing.T) {
+	f := setupMCP(t)
+
+	var inst map[string]any
+	f.callDecode(t, "create_instance", map[string]any{
+		"template_id": f.templateID, "team_id": "team-mcp", "name": "inst-my-wi",
+	}, &inst)
+	instanceID, _ := inst["id"].(string)
+
+	f.callDecode(t, "create_work_item", map[string]any{
+		"instance_id": instanceID, "title": "my wi",
+		"assigned_agent_id": "agent-me",
+	}, nil)
+
+	var items []map[string]any
+	f.callDecode(t, "list_my_work_items", map[string]any{"agent_id": "agent-me"}, &items)
+	if len(items) != 1 {
+		t.Errorf("list_my_work_items: got %d, want 1", len(items))
+	}
+}
+
+func TestMCP_GetVocabulary(t *testing.T) {
+	f := setupMCP(t)
+
+	// First get the SDLC vocabulary ID from the list.
+	var vocabs []map[string]any
+	c := harness.NewClient(f.env.Daemon.BaseURL(),
+		f.env.Daemon.SignJWT("svc-v", "flow-v", "V", "service"))
+	if status, _, err := c.GetJSON("/v1/vocabularies", &vocabs); err != nil || status != 200 {
+		t.Fatalf("list vocabularies: %d %v", status, err)
+	}
+	var sdlcID string
+	for _, v := range vocabs {
+		if v["name"] == "sdlc" {
+			sdlcID, _ = v["id"].(string)
+		}
+	}
+	if sdlcID == "" {
+		t.Fatal("SDLC vocabulary not found")
+	}
+
+	var voc map[string]any
+	f.callDecode(t, "get_vocabulary", map[string]any{"id": sdlcID}, &voc)
+	if voc["name"] != "sdlc" {
+		t.Errorf("get_vocabulary name = %v, want sdlc", voc["name"])
+	}
+	events, _ := voc["events"].([]any)
+	if len(events) == 0 {
+		t.Errorf("get_vocabulary events: got %d, want > 0", len(events))
+	}
+}
+
+func TestMCP_GetMyProject_NoClaimReturnsError(t *testing.T) {
+	f := setupMCP(t)
+
+	// An agent with no audit history should get an error.
+	if _, err := f.mcp.Call("get_my_project", map[string]any{
+		"agent_id": "agent-unclaimed",
+	}); err == nil {
+		t.Error("get_my_project with no claim: expected error, got nil")
+	}
+}

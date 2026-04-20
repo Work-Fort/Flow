@@ -22,8 +22,9 @@ func jsonResult(v any) (*mcp.CallToolResult, error) {
 	return mcp.NewToolResultText(string(data)), nil
 }
 
-// registerTools registers all 12 MCP tools on the server.
-func registerTools(s *server.MCPServer, deps MCPDeps) {
+// RegisterTools registers every MCP tool the adjutant needs;
+// count is asserted in TestRegisterTools_Count.
+func RegisterTools(s *server.MCPServer, deps MCPDeps) {
 	// list_templates
 	s.AddTool(
 		mcp.NewTool("list_templates",
@@ -346,6 +347,75 @@ func registerTools(s *server.MCPServer, deps MCPDeps) {
 				"by_step":  byStep,
 			}
 			return jsonResult(result)
+		},
+	)
+
+	// get_my_project: resolves via audit log for the most recent unreleased claim.
+	s.AddTool(
+		mcp.NewTool("get_my_project",
+			mcp.WithDescription("Look up the project the agent is currently claimed for."),
+			mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			agentID := req.GetString("agent_id", "")
+			events, err := deps.Store.ListAuditEventsByAgent(ctx, agentID)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			var projectName string
+			for i := len(events) - 1; i >= 0; i-- {
+				if events[i].Type == domain.AuditEventAgentClaimed {
+					projectName = events[i].Project
+					break
+				}
+				if events[i].Type == domain.AuditEventAgentReleased {
+					return mcp.NewToolResultError("agent has no active claim"), nil
+				}
+			}
+			if projectName == "" {
+				return mcp.NewToolResultError("agent has no claim history"), nil
+			}
+			p, err := deps.Store.GetProjectByName(ctx, projectName)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			v, err := deps.Store.GetVocabulary(ctx, p.VocabularyID)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(map[string]any{"project": p, "vocabulary": v})
+		},
+	)
+
+	// list_my_work_items: indexed by work_items_assigned_agent_idx.
+	s.AddTool(
+		mcp.NewTool("list_my_work_items",
+			mcp.WithDescription("List work items currently assigned to the agent."),
+			mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			agentID := req.GetString("agent_id", "")
+			items, err := deps.Store.ListWorkItemsByAgent(ctx, agentID)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(items)
+		},
+	)
+
+	// get_vocabulary
+	s.AddTool(
+		mcp.NewTool("get_vocabulary",
+			mcp.WithDescription("Get a vocabulary by ID, including its event catalogue."),
+			mcp.WithString("id", mcp.Required(), mcp.Description("Vocabulary ID")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			id := req.GetString("id", "")
+			v, err := deps.Store.GetVocabulary(ctx, id)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return jsonResult(v)
 		},
 	)
 }

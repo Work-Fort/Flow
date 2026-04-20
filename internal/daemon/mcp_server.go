@@ -25,7 +25,7 @@ func NewMCPHandler(deps MCPDeps) http.Handler {
 		server.WithToolCapabilities(false),
 	)
 
-	registerTools(mcpServer, deps)
+	RegisterTools(mcpServer, deps)
 
 	httpServer := server.NewStreamableHTTPServer(mcpServer)
 
