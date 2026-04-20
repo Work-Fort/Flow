@@ -2,16 +2,16 @@
 type: plan
 step: "fix"
 title: "Bump TestRenewer_WaitIdleRaceUnderLoad budget for CI variance"
-status: pending
-assessment_status: needed
+status: complete
+assessment_status: complete
 provenance:
   source: issue
   issue_id: null
   roadmap_step: null
 dates:
   created: "2026-04-19"
-  approved: null
-  completed: null
+  approved: "2026-04-19"
+  completed: "2026-04-19"
 related_plans:
   - "2026-04-19-renewer-waitidle-flake.md"
 ---
