@@ -2,15 +2,15 @@
 type: plan
 step: "2026-04-19-pg-test-isolation"
 title: "Isolate PG state between Flow's unit-test and e2e runs"
-status: pending
-assessment_status: needed
+status: approved
+assessment_status: complete
 provenance:
   source: issue
   issue_id: null
   roadmap_step: null
 dates:
   created: "2026-04-19"
-  approved: null
+  approved: "2026-04-19"
   completed: null
 related_plans:
   - 2026-04-19-ci-pg-fix.md
