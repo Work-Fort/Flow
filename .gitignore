@@ -1,2 +1,7 @@
 build/
 !.mise/tasks/build/
+
+# Web UI build output (kept out of git; built into the binary via -tags ui)
+web/dist/*
+!web/dist/.gitkeep
+web/node_modules/
