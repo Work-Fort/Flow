@@ -2,15 +2,15 @@
 type: plan
 step: "fix"
 title: "Widen e2e daemon-ready timeouts for CI parallel-load contention"
-status: pending
-assessment_status: needed
+status: approved
+assessment_status: complete
 provenance:
   source: issue
   issue_id: null
   roadmap_step: null
 dates:
   created: "2026-04-19"
-  approved: null
+  approved: "2026-04-19"
   completed: null
 related_plans: []
 ---
