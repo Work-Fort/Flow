@@ -27,19 +27,24 @@ func TestBot_BindUnbind(t *testing.T) {
 	_, _, _ = c.PostJSON("/v1/projects",
 		map[string]any{"name": "bot-prj", "channel_name": "#bot-prj"}, &prj)
 
-	var bot struct {
-		ID                  string   `json:"id"`
-		PassportAPIKeyID    string   `json:"passport_api_key_id"`
-		HiveRoleAssignments []string `json:"hive_role_assignments"`
+	var createResp struct {
+		Bot struct {
+			ID                  string   `json:"id"`
+			PassportAPIKeyID    string   `json:"passport_api_key_id"`
+			HiveRoleAssignments []string `json:"hive_role_assignments"`
+		} `json:"bot"`
+		PlaintextAPIKey string `json:"plaintext_api_key"`
 	}
 	status, body, err := c.PostJSON("/v1/projects/"+prj.ID+"/bot", map[string]any{
+		"bring_your_own_key":    true,
 		"passport_api_key":      "wf-svc_test_plaintext_xxxxxxxx",
 		"passport_api_key_id":   "pak_test_001",
 		"hive_role_assignments": []string{"developer", "reviewer"},
-	}, &bot)
+	}, &createResp)
 	if err != nil || status != http.StatusCreated {
 		t.Fatalf("bind bot: status=%d body=%s err=%v", status, body, err)
 	}
+	bot := createResp.Bot
 	if bot.PassportAPIKeyID != "pak_test_001" || len(bot.HiveRoleAssignments) != 2 {
 		t.Errorf("bot row missing fields: %+v", bot)
 	}
@@ -57,7 +62,7 @@ func TestBot_BindUnbind(t *testing.T) {
 
 	// Idempotency: second create returns 409.
 	if status, _, _ := c.PostJSON("/v1/projects/"+prj.ID+"/bot", map[string]any{
-		"passport_api_key": "wf-svc_other", "passport_api_key_id": "pak_2",
+		"bring_your_own_key": true, "passport_api_key": "wf-svc_other", "passport_api_key_id": "pak_2",
 	}, nil); status != http.StatusConflict {
 		t.Errorf("expected 409 on duplicate bind, got %d", status)
 	}

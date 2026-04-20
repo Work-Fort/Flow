@@ -76,6 +76,22 @@ func (s *Store) GetBotByProject(ctx context.Context, projectID string) (*domain.
 	return &b, nil
 }
 
+func (s *Store) UpdateBot(ctx context.Context, b *domain.Bot) error {
+	b.UpdatedAt = time.Now().UTC()
+	rolesJSON, _ := json.Marshal(b.HiveRoleAssignments)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE bots SET passport_api_key_hash=?, passport_api_key_id=?, hive_role_assignments=?, updated_at=? WHERE id=?`,
+		b.PassportAPIKeyHash, b.PassportAPIKeyID, string(rolesJSON), b.UpdatedAt, b.ID)
+	if err != nil {
+		return fmt.Errorf("update bot: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("%w: bot %s", domain.ErrNotFound, b.ID)
+	}
+	return nil
+}
+
 func (s *Store) DeleteBotByProject(ctx context.Context, projectID string) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM bots WHERE project_id = ?`, projectID)
 	if err != nil {

@@ -85,6 +85,7 @@ func (s *minimalFakeStore) CreateBot(context.Context, *domain.Bot) error        
 func (s *minimalFakeStore) GetBotByID(context.Context, string) (*domain.Bot, error)      { panic("unimplemented") }
 func (s *minimalFakeStore) GetBotByProject(context.Context, string) (*domain.Bot, error) { panic("unimplemented") }
 func (s *minimalFakeStore) DeleteBotByProject(context.Context, string) error              { panic("unimplemented") }
+func (s *minimalFakeStore) UpdateBot(context.Context, *domain.Bot) error                  { panic("unimplemented") }
 func (s *minimalFakeStore) CreateTemplate(context.Context, *domain.WorkflowTemplate) error { panic("unimplemented") }
 func (s *minimalFakeStore) GetTemplate(context.Context, string) (*domain.WorkflowTemplate, error) { panic("unimplemented") }
 func (s *minimalFakeStore) ListTemplates(context.Context) ([]*domain.WorkflowTemplate, error) { panic("unimplemented") }

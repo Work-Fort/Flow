@@ -322,9 +322,20 @@ type BotOutput struct {
 type CreateBotInput struct {
 	ID   string `path:"id" doc:"Project ID"`
 	Body struct {
-		PassportAPIKey      string   `json:"passport_api_key" doc:"Passport API key plaintext (stored hashed; not returned)" minLength:"1"`
-		PassportAPIKeyID    string   `json:"passport_api_key_id" doc:"Passport key ID" minLength:"1"`
+		PassportAPIKey      string   `json:"passport_api_key,omitempty" doc:"Passport API key plaintext (BYO-key path only)"`
+		PassportAPIKeyID    string   `json:"passport_api_key_id,omitempty" doc:"Passport key ID (BYO-key path only)"`
 		HiveRoleAssignments []string `json:"hive_role_assignments,omitempty" doc:"Hive role IDs the bot may claim for"`
+		BringYourOwnKey     bool     `json:"bring_your_own_key,omitempty" doc:"Skip auto-mint; supply passport_api_key + passport_api_key_id instead"`
+	}
+}
+
+// BotPlaintextOutput is returned by create-bot and rotate-key — carries
+// the bot response plus the one-time plaintext key. The plaintext is
+// never returned by any other endpoint.
+type BotPlaintextOutput struct {
+	Body struct {
+		Bot            botResponse `json:"bot"`
+		PlaintextAPIKey string     `json:"plaintext_api_key,omitempty"`
 	}
 }
 

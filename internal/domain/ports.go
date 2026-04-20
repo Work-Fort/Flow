@@ -55,6 +55,7 @@ type BotStore interface {
 	GetBotByID(ctx context.Context, id string) (*Bot, error)
 	GetBotByProject(ctx context.Context, projectID string) (*Bot, error)
 	DeleteBotByProject(ctx context.Context, projectID string) error
+	UpdateBot(ctx context.Context, b *Bot) error
 }
 
 type VocabularyStore interface {
@@ -128,6 +129,17 @@ type AuditEventStore interface {
 	// ListAuditEventsFiltered returns events matching all non-zero fields
 	// of f, oldest first. Supports pagination via Limit + Offset.
 	ListAuditEventsFiltered(ctx context.Context, f AuditFilter) ([]*AuditEvent, error)
+}
+
+// PassportProvider manages API key lifecycle for bot identities.
+type PassportProvider interface {
+	// MintAPIKey creates a new API key in Passport. Returns the plaintext
+	// (only available at creation time) and the key ID for future operations.
+	MintAPIKey(ctx context.Context, name string) (plaintext, keyID string, err error)
+
+	// RevokeAPIKey revokes an existing key by ID. Best-effort — callers
+	// should log failures but not abort their primary operation.
+	RevokeAPIKey(ctx context.Context, keyID string) error
 }
 
 // RuntimeDriver abstracts the runtime that actually executes an agent's

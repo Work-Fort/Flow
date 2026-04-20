@@ -23,6 +23,7 @@ import (
 	botpkg "github.com/Work-Fort/Flow/internal/bot"
 	"github.com/Work-Fort/Flow/internal/domain"
 	hiveinfra "github.com/Work-Fort/Flow/internal/infra/hive"
+	passportinfra "github.com/Work-Fort/Flow/internal/infra/passport"
 	sharkfininfra "github.com/Work-Fort/Flow/internal/infra/sharkfin"
 	"github.com/Work-Fort/Flow/internal/scheduler"
 	"github.com/Work-Fort/Flow/internal/workflow"
@@ -67,6 +68,10 @@ type ServerConfig struct {
 	// Chat is the optional ChatProvider injected for auto-provisioning
 	// Sharkfin channels on project create. When nil, channel create is skipped.
 	Chat domain.ChatProvider
+
+	// Passport is the optional PassportProvider for bot API key lifecycle.
+	// When nil, auto-mint is disabled and the create-bot handler returns 503.
+	Passport domain.PassportProvider
 }
 
 // NewServer creates and configures the HTTP server.
@@ -113,6 +118,11 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 		}
 	}
 
+	// Wire Passport client when a URL is configured and no override was injected.
+	if cfg.Passport == nil && cfg.PassportURL != "" && cfg.ServiceToken != "" {
+		cfg.Passport = passportinfra.New(cfg.PassportURL, cfg.ServiceToken)
+	}
+
 	svc := workflow.New(cfg.Store, identityProvider)
 	if chatAdapter != nil {
 		svc = svc.WithChat(chatAdapter)
@@ -151,6 +161,7 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	registerSchedulerAndAuditDiagRoutes(api, sch, cfg.Store)
 	registerVocabularyRoutes(api, cfg.Store)
 	registerProjectRoutes(api, cfg.Store, cfg.BotKeysDir, cfg.Chat)
+	registerBotKeyRoutes(api, cfg.Store, cfg.BotKeysDir, cfg.Passport)
 	registerAgentRoutes(api, hiveAgentClient)
 	registerAuditRoutes(api, cfg.Store)
 

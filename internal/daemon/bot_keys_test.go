@@ -48,6 +48,14 @@ func (s *stubBotStore) DeleteBotByProject(_ context.Context, projectID string) e
 	return fmt.Errorf("%w: bot for project %s", domain.ErrNotFound, projectID)
 }
 
+func (s *stubBotStore) UpdateBot(_ context.Context, b *domain.Bot) error {
+	if _, ok := s.bots[b.ID]; !ok {
+		return fmt.Errorf("%w: bot %s", domain.ErrNotFound, b.ID)
+	}
+	s.bots[b.ID] = b
+	return nil
+}
+
 func TestBotKeys_StartupSweep_RemovesOrphans(t *testing.T) {
 	dir := t.TempDir()
 

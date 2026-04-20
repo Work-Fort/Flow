@@ -3,7 +3,6 @@ package daemon
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"github.com/charmbracelet/log"
@@ -135,85 +134,6 @@ func registerProjectRoutes(api huma.API, store domain.Store, botKeysDir string, 
 		Tags:          []string{"Projects"},
 	}, func(ctx context.Context, input *IDPathInput) (*struct{}, error) {
 		if err := store.DeleteProject(ctx, input.ID); err != nil {
-			return nil, mapDomainErr(err)
-		}
-		return nil, nil
-	})
-
-	// Bot sub-routes
-	huma.Register(api, huma.Operation{
-		OperationID:   "create-bot",
-		Method:        http.MethodPost,
-		Path:          "/v1/projects/{id}/bot",
-		Summary:       "Bind a bot identity to a project",
-		DefaultStatus: http.StatusCreated,
-		Tags:          []string{"Bots"},
-	}, func(ctx context.Context, input *CreateBotInput) (*BotOutput, error) {
-		if botKeysDir == "" {
-			return nil, huma.NewError(http.StatusServiceUnavailable, "bot keys directory not configured")
-		}
-		if _, err := store.GetProject(ctx, input.ID); err != nil {
-			return nil, mapDomainErr(err)
-		}
-		b := &domain.Bot{
-			ID:                  NewID("bot"),
-			ProjectID:           input.ID,
-			PassportAPIKeyHash:  hashAPIKey(input.Body.PassportAPIKey),
-			PassportAPIKeyID:    input.Body.PassportAPIKeyID,
-			HiveRoleAssignments: input.Body.HiveRoleAssignments,
-		}
-		if b.HiveRoleAssignments == nil {
-			b.HiveRoleAssignments = []string{}
-		}
-		if err := store.CreateBot(ctx, b); err != nil {
-			return nil, mapDomainErr(err)
-		}
-		if err := writeBotKeyFile(botKeysDir, b.ID, input.Body.PassportAPIKey); err != nil {
-			// Key file write failure is loggable but non-fatal at the handler level;
-			// the row is already committed and surfacing ErrBotKeyMissing on first use
-			// is the documented recovery path.
-			_ = err
-		}
-		created, err := store.GetBotByProject(ctx, input.ID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-		return &BotOutput{Body: botToResponse(created)}, nil
-	})
-
-	huma.Register(api, huma.Operation{
-		OperationID: "get-bot",
-		Method:      http.MethodGet,
-		Path:        "/v1/projects/{id}/bot",
-		Summary:     "Get the bot for a project",
-		Tags:        []string{"Bots"},
-	}, func(ctx context.Context, input *IDPathInput) (*BotOutput, error) {
-		b, err := store.GetBotByProject(ctx, input.ID)
-		if err != nil {
-			return nil, mapDomainErr(err)
-		}
-		return &BotOutput{Body: botToResponse(b)}, nil
-	})
-
-	huma.Register(api, huma.Operation{
-		OperationID:   "delete-bot",
-		Method:        http.MethodDelete,
-		Path:          "/v1/projects/{id}/bot",
-		Summary:       "Unbind and delete the project bot",
-		DefaultStatus: http.StatusNoContent,
-		Tags:          []string{"Bots"},
-	}, func(ctx context.Context, input *IDPathInput) (*struct{}, error) {
-		b, err := store.GetBotByProject(ctx, input.ID)
-		if err != nil {
-			if errors.Is(err, domain.ErrNotFound) {
-				return nil, huma.NewError(http.StatusNotFound, err.Error())
-			}
-			return nil, mapDomainErr(err)
-		}
-		if botKeysDir != "" {
-			removeBotKeyFile(botKeysDir, b.ID)
-		}
-		if err := store.DeleteBotByProject(ctx, input.ID); err != nil {
 			return nil, mapDomainErr(err)
 		}
 		return nil, nil
