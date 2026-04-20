@@ -41,4 +41,8 @@ var (
 	// requested operation is incompatible with the resource's current
 	// state (e.g., trying to clone a drive whose source is attached).
 	ErrInvalidState = errors.New("invalid state")
+
+	ErrEventNotInVocabulary = errors.New("event not in vocabulary")
+	ErrProjectHasBot        = errors.New("project still has a bound bot")
+	ErrBotKeyMissing        = errors.New("bot Passport key file missing")
 )
