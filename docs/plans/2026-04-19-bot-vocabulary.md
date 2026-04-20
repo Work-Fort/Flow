@@ -105,8 +105,12 @@ Before starting:
 ## Hard constraints (non-negotiable)
 
 - **Vocabulary is per-workflow-template**, not permanently SDLC.
-  Hard-coding any of the 8 SDLC event-type names into Flow Go code
-  outside the seed file is a plan failure.
+  Hard-coding SDLC event-type names into Flow Go code outside the
+  seed file is a plan failure. The single exception is the defensive
+  `"task_completed"` literal in the scheduler's release-dispatch
+  fallback (Task 9), which is reachable only when a vocabulary
+  forgets to declare `release_event` and is documented in-code with
+  a "do not extend" comment.
 - **Bot model**: 1 project = 1 bot = 1 Sharkfin channel. Schema and
   REST contracts enforce this with UNIQUE constraints + 409 conflict
   responses.
@@ -118,7 +122,11 @@ Before starting:
   `internal/domain/`, no infra leakage. The vocabulary renderer takes
   domain types in and returns a rendered string + a metadata
   `json.RawMessage`; nothing imports `sharkfin/client/go` from
-  `internal/domain/`.
+  `internal/domain/`. The bot dispatcher is consumed by other
+  packages (notably `internal/scheduler/`) **only through the
+  `domain.BotDispatcher` port** — the concrete `*bot.Dispatcher`
+  type never appears in another package's public surface. Same
+  pattern as the existing `ChatProvider` / `IdentityProvider` ports.
 - **Dual-backend e2e** per `feedback_e2e_dual_backend.md`. Every new
   store method has tests that run under both `--backend=sqlite` and
   `--backend=postgres`; no silent skips.
@@ -244,12 +252,18 @@ Seeded from `docs/examples/vocabularies/sdlc.json`:
 | `tests_passing` | external integration push event with status "ok" | `repo`, `run_id` |
 | `merged` | combine pull_request_merged webhook | `pr_number`, `merged_by`, `target_branch` |
 | `deployed` | flow transition into a step keyed "deployed" | `commit_sha`, `env` |
+| `task_completed` | scheduler release fires the vocab's `release_event` | `agent_id`, `role`, `workflow_id` |
 
 A custom bug-tracker vocabulary
 (`docs/examples/vocabularies/bug-tracker.json`) ships alongside it
-with `bug_filed`, `bug_triaged`, `bug_assigned`, `bug_resolved`,
-`bug_reopened` to prove the per-template plug-in path. Task 13
-exercises this via e2e.
+covering the **full lifecycle** the design briefing calls out — file,
+triage, assign, fix-proposed, verify, close, plus reopen — to prove
+the per-template plug-in path. Concretely the seed declares
+`bug_filed`, `bug_triaged`, `bug_assigned`, `bug_fix_proposed`,
+`bug_verified`, `bug_closed`, `bug_reopened` (release_event:
+`bug_closed`). Task 13 drives at least the
+`bug_filed → bug_fix_proposed → bug_verified → bug_closed` segment
+end-to-end.
 
 ## Bot model
 
@@ -395,10 +409,14 @@ the new project + bot + vocabulary surface** and asserts:
 
 - Each canonical SDLC event the loop fires renders the expected
   rendered text + metadata sidecar via the project's vocabulary
-  (`FakeSharkfin.RecordedPosts()` returns the rendered strings).
+  (`FakeSharkfin.Messages()` returns `[]SharkfinMessage{Channel,
+  Body, Metadata}` — assert against `Body` for the rendered string
+  and `Metadata["event_type"]` for the discriminator).
 - The bug-tracker vocabulary plug-in path works: a second project
-  bound to the bug-tracker vocab fires `bug_filed` + `bug_resolved`
-  and the harness asserts neither event renders to the SDLC text.
+  bound to the bug-tracker vocab drives the full
+  `bug_filed → bug_fix_proposed → bug_verified → bug_closed` cycle
+  and the harness asserts the recorded `Body` strings match the
+  bug-tracker templates and never the SDLC text.
 - The audit log filtered by project (new
   `GET /v1/projects/{id}/audit`) returns ONLY events scoped to that
   project — no cross-project leakage.
@@ -534,7 +552,10 @@ type Project struct {
 // SPDX-License-Identifier: GPL-2.0-only
 package domain
 
-import "time"
+import (
+    "context"
+    "time"
+)
 
 type Bot struct {
     ID                  string    `json:"id"`
@@ -544,6 +565,15 @@ type Bot struct {
     HiveRoleAssignments []string  `json:"hive_role_assignments"`
     CreatedAt           time.Time `json:"created_at"`
     UpdatedAt           time.Time `json:"updated_at"`
+}
+
+// BotDispatcher is the inward-facing port the scheduler + webhook
+// handlers call to send vocabulary-rendered messages on a project's
+// behalf. Implementations live in internal/bot/. Keeping the port in
+// domain follows the same pattern as ChatProvider/IdentityProvider —
+// no inward package imports the concrete implementation.
+type BotDispatcher interface {
+    Dispatch(ctx context.Context, projectID, eventType string, ctxData VocabularyContext) error
 }
 ```
 
@@ -655,42 +685,45 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 **Depends on:** Task 1 (entity types).
 
 **Files:**
-- Modify: `internal/domain/ports.go` — add three new store interfaces
-  and embed them in the existing `Store` aggregator interface
-  (line 42-50).
+- Modify: `internal/domain/ports.go` — add four new store interfaces
+  (Project, Bot, Vocabulary, plus a `WorkItemStore.ListWorkItemsByAgent`
+  method needed by Task 11's `list_my_work_items` MCP tool) and embed
+  the three new aggregator interfaces in the existing `Store`
+  interface (current line 42-50).
+- Modify: `internal/infra/sqlite/store.go` — add
+  `var _ domain.Store = (*Store)(nil)` at the bottom of the file
+  (idiomatic compile-time interface check; replaces the runtime test
+  pattern).
+- Modify: `internal/infra/postgres/store.go` — same
+  `var _ domain.Store = (*Store)(nil)` assertion.
 
-**Step 1: Write the failing test**
+The compile-time assertion in each store file is the entire
+correctness check: when Tasks 3 + 4 forget to implement a method on
+either backend, the build breaks immediately, which is faster and
+clearer than a separate test that builds an empty `var s domain.Store
+= nil`. No new `_test.go` file is added for this task.
+
+**Step 1: Write the failing assertion**
+
+Append to `internal/infra/sqlite/store.go` (concrete `*Store` is
+declared at line 19 in the existing file):
 
 ```go
-// internal/domain/ports_test.go (new file)
-// SPDX-License-Identifier: GPL-2.0-only
-package domain_test
-
-import (
-    "context"
-    "testing"
-
-    "github.com/Work-Fort/Flow/internal/domain"
-)
-
-// Verifies the store aggregator embeds the three new interfaces. The
-// test exists to lock the aggregator surface — adding a method to
-// any of the four interfaces without updating Store would break this.
-func TestStore_EmbedsProjectBotVocabulary(t *testing.T) {
-    var s domain.Store = nil
-    if s != nil {
-        // never run — exists to assert method-set coverage at compile time.
-        _, _ = s.GetProject(context.Background(), "x")
-        _, _ = s.GetBotByProject(context.Background(), "x")
-        _, _ = s.GetVocabulary(context.Background(), "x")
-    }
-}
+// Compile-time check: *Store satisfies the full domain.Store
+// aggregator. Updating the aggregator (Task 2) without implementing
+// the new methods (Tasks 3-4) breaks the build here.
+var _ domain.Store = (*Store)(nil)
 ```
 
-**Step 2: Run test to verify it fails**
+(Same line in `internal/infra/postgres/store.go`.)
 
-Run: `go test -run TestStore_EmbedsProjectBotVocabulary ./internal/domain/...`
-Expected: FAIL — compile error: `s.GetProject undefined`.
+**Step 2: Run build to verify it fails**
+
+Run: `go build ./...`
+Expected: build error: `*Store does not implement domain.Store
+(missing GetProject method)` — and likewise for `GetBotByProject`,
+`GetVocabulary`, `ListWorkItemsByAgent`,
+`ListAuditEventsByProject`.
 
 **Step 3: Write minimal implementation**
 
@@ -733,6 +766,21 @@ type Store interface {
     io.Closer
 }
 
+// WorkItemStore extension — needed by Task 11's list_my_work_items
+// MCP tool. The pre-existing ListWorkItems is keyed by instanceID,
+// which forces a list-instances-then-iterate scan from the MCP tool;
+// adding a direct by-agent query keeps the tool tractable at any
+// instance count. Indexed in Tasks 3 + 4.
+type WorkItemStore interface {
+    CreateWorkItem(ctx context.Context, w *WorkItem) error
+    GetWorkItem(ctx context.Context, id string) (*WorkItem, error)
+    ListWorkItems(ctx context.Context, instanceID, stepID, agentID string, priority Priority) ([]*WorkItem, error)
+    ListWorkItemsByAgent(ctx context.Context, agentID string) ([]*WorkItem, error)
+    UpdateWorkItem(ctx context.Context, w *WorkItem) error
+    RecordTransition(ctx context.Context, h *TransitionHistory) error
+    GetTransitionHistory(ctx context.Context, workItemID string) ([]*TransitionHistory, error)
+}
+
 // Add a new audit-by-project query to AuditEventStore (project filter
 // is the new GET /v1/projects/{id}/audit's backing call).
 type AuditEventStore interface {
@@ -743,10 +791,12 @@ type AuditEventStore interface {
 }
 ```
 
-**Step 4: Run test to verify it passes**
+**Step 4: Run build to verify it passes**
 
-Run: `go test -run TestStore_EmbedsProjectBotVocabulary ./internal/domain/...`
-Expected: PASS.
+Run: `go build ./...`
+Expected: build succeeds (the `var _ domain.Store = (*Store)(nil)`
+assertions in both backend `store.go` files compile because Tasks 3 +
+4 implement every new method).
 
 **Step 5: Commit**
 
@@ -862,7 +912,31 @@ func TestStore_AuditByProject(t *testing.T) {
         t.Fatalf("ListAuditEventsByProject: %v err=%v", got, err)
     }
 }
+
+func TestStore_ListWorkItemsByAgent(t *testing.T) {
+    store := openTestStore(t)
+    ctx := context.Background()
+    // Seed via the existing helpers — same shape as the
+    // pre-existing TestStore_WorkItemCRUD setup.
+    seedTwoInstancesOneAgent(t, store, "agent-x")
+    items, err := store.ListWorkItemsByAgent(ctx, "agent-x")
+    if err != nil {
+        t.Fatalf("ListWorkItemsByAgent: %v", err)
+    }
+    if len(items) != 2 {
+        t.Errorf("expected 2 items across 2 instances, got %d", len(items))
+    }
+    for _, it := range items {
+        if it.AssignedAgentID != "agent-x" {
+            t.Errorf("item %s assigned to %s, want agent-x", it.ID, it.AssignedAgentID)
+        }
+    }
+}
 ```
+
+(`seedTwoInstancesOneAgent` is a small test-helper that creates two
+templates+instances and one work item per instance, both assigned to
+`agent-x`. Add it to `store_test.go` alongside the test.)
 
 **Step 2: Run test to verify it fails**
 
@@ -916,9 +990,11 @@ CREATE TABLE bots (
 );
 
 CREATE INDEX audit_events_project_idx ON audit_events(project, occurred_at);
+CREATE INDEX work_items_assigned_agent_idx ON work_items(assigned_agent_id);
 
 -- +goose Down
 
+DROP INDEX work_items_assigned_agent_idx;
 DROP INDEX audit_events_project_idx;
 DROP TABLE bots;
 DROP TABLE projects;
@@ -1183,25 +1259,46 @@ func (s *Store) loadVocabulary(ctx context.Context, col, val string) (*domain.Vo
     return &v, rows.Err()
 }
 
+// ListVocabularies loads every vocabulary + its events in a single
+// pass. The implementation fetches vocabulary rows first, then all
+// vocabulary_events rows, then groups events by vocabulary_id
+// in-memory — avoiding the N+1 pattern that a per-row
+// GetVocabulary call would incur. Acceptable at tenant scale on
+// record (≤ 50 vocabularies); revisit if that assumption breaks.
 func (s *Store) ListVocabularies(ctx context.Context) ([]*domain.Vocabulary, error) {
     rows, err := s.db.QueryContext(ctx,
-        `SELECT id FROM vocabularies ORDER BY name ASC`)
-    if err != nil { return nil, fmt.Errorf("list vocab ids: %w", err) }
+        `SELECT id, name, description, release_event, created_at, updated_at FROM vocabularies ORDER BY name ASC`)
+    if err != nil { return nil, fmt.Errorf("list vocabularies: %w", err) }
     defer rows.Close()
-    var ids []string
+    byID := map[string]*domain.Vocabulary{}
+    var out []*domain.Vocabulary
     for rows.Next() {
-        var id string
-        if err := rows.Scan(&id); err != nil { return nil, err }
-        ids = append(ids, id)
+        var v domain.Vocabulary
+        if err := rows.Scan(&v.ID, &v.Name, &v.Description, &v.ReleaseEvent, &v.CreatedAt, &v.UpdatedAt); err != nil {
+            return nil, fmt.Errorf("scan vocab: %w", err)
+        }
+        vp := &v
+        byID[v.ID] = vp
+        out = append(out, vp)
     }
     if err := rows.Err(); err != nil { return nil, err }
-    var out []*domain.Vocabulary
-    for _, id := range ids {
-        v, err := s.GetVocabulary(ctx, id)
-        if err != nil { return nil, err }
-        out = append(out, v)
+
+    eventRows, err := s.db.QueryContext(ctx,
+        `SELECT id, vocabulary_id, event_type, message_template, metadata_keys FROM vocabulary_events ORDER BY vocabulary_id, event_type`)
+    if err != nil { return nil, fmt.Errorf("list all vocab events: %w", err) }
+    defer eventRows.Close()
+    for eventRows.Next() {
+        var e domain.VocabularyEvent
+        var keys string
+        if err := eventRows.Scan(&e.ID, &e.VocabularyID, &e.EventType, &e.MessageTemplate, &keys); err != nil {
+            return nil, fmt.Errorf("scan vocab event: %w", err)
+        }
+        _ = json.Unmarshal([]byte(keys), &e.MetadataKeys)
+        if vp := byID[e.VocabularyID]; vp != nil {
+            vp.Events = append(vp.Events, e)
+        }
     }
-    return out, nil
+    return out, eventRows.Err()
 }
 ```
 
@@ -1219,6 +1316,24 @@ func (s *Store) ListAuditEventsByProject(ctx context.Context, project string) ([
     return scanAuditEvents(rows)
 }
 ```
+
+Work-item-by-agent addition (modify `internal/infra/sqlite/workitems.go`):
+
+```go
+func (s *Store) ListWorkItemsByAgent(ctx context.Context, agentID string) ([]*domain.WorkItem, error) {
+    rows, err := s.db.QueryContext(ctx, `
+        SELECT `+workItemCols+`
+        FROM work_items
+        WHERE assigned_agent_id = ?
+        ORDER BY updated_at DESC, id ASC`, agentID)
+    if err != nil { return nil, fmt.Errorf("query work_items by agent: %w", err) }
+    defer rows.Close()
+    return scanWorkItems(rows)
+}
+```
+
+(`workItemCols` and `scanWorkItems` already exist in the file.
+Indexed by `work_items_assigned_agent_idx` from migration 003.)
 
 **Step 4: Run test to verify it passes**
 
@@ -1249,15 +1364,22 @@ Mirrors Task 3 against the postgres backend. Files:
 
 - Create: `internal/infra/postgres/migrations/003_projects_bots_vocab.sql`
   — same DDL with TIMESTAMPTZ + JSONB for `metadata_keys` /
-  `hive_role_assignments`.
+  `hive_role_assignments`. Includes the
+  `CREATE INDEX work_items_assigned_agent_idx ON
+  work_items(assigned_agent_id)` mirror.
 - Create: `internal/infra/postgres/projects.go`,
   `internal/infra/postgres/bots.go`,
   `internal/infra/postgres/vocabularies.go` — `$1`/`$2` placeholders
-  instead of `?`, otherwise identical to the sqlite impls.
+  instead of `?`, otherwise identical to the sqlite impls (including
+  the in-memory grouped `ListVocabularies` to avoid N+1).
 - Modify: `internal/infra/postgres/audit.go` — add
   `ListAuditEventsByProject`.
-- Test: `internal/infra/postgres/store_test.go` — copy the three
-  sqlite test cases verbatim under postgres test harness.
+- Modify: `internal/infra/postgres/workitems.go` — add
+  `ListWorkItemsByAgent`.
+- Test: `internal/infra/postgres/store_test.go` — copy the four
+  sqlite test cases verbatim (`TestStore_ProjectCRUD`,
+  `TestStore_BotCRUD`, `TestStore_AuditByProject`,
+  `TestStore_ListWorkItemsByAgent`) under the postgres test harness.
 
 **Step 1-4 mirror Task 3.** Test command:
 `go test ./internal/infra/postgres/...`
@@ -1342,8 +1464,23 @@ func TestProjects_CRUD(t *testing.T) {
         t.Fatalf("get project: status=%d err=%v", status, err)
     }
     if got["name"] != "p-test" { t.Errorf("name = %v", got["name"]) }
+
+    // Default-vocab path: omitting vocabulary_id resolves to the SDLC
+    // seed via store.GetVocabularyByName(ctx, "sdlc").
+    var defaulted struct {
+        ID            string `json:"id"`
+        VocabularyID  string `json:"vocabulary_id"`
+    }
+    if status, _, err := c.PostJSON("/v1/projects", map[string]any{
+        "name": "p-default", "channel_name": "#p-default",
+    }, &defaulted); err != nil || status != http.StatusCreated {
+        t.Fatalf("create default-vocab project: status=%d err=%v", status, err)
+    }
+    if defaulted.VocabularyID != sdlcID {
+        t.Errorf("default vocabulary_id = %q, want SDLC seed %q",
+            defaulted.VocabularyID, sdlcID)
+    }
 }
-```
 
 **Step 2: Run test to verify it fails**
 
@@ -1376,13 +1513,48 @@ case errors.Is(err, domain.ErrProjectHasBot):
     return huma.NewError(http.StatusConflict, err.Error())
 ```
 
-Modify `internal/daemon/server.go:118` (after the existing
-`register*Routes` calls):
+In `internal/daemon/server.go`'s `NewServer` (currently at line 55),
+after the existing block of `register*Routes(api, …)` calls (today
+that block ends with `registerSchedulerAndAuditDiagRoutes`), append:
 
 ```go
 registerVocabularyRoutes(api, cfg.Store)
-registerProjectRoutes(api, cfg.Store)
+registerProjectRoutes(api, cfg.Store, cfg.BotKeysDir)
 ```
+
+(`cfg.BotKeysDir` is added to `ServerConfig` in the additions block
+below — Task 7 wires the actual key file management onto the bot
+sub-routes registered inside `registerProjectRoutes`.)
+
+#### ServerConfig additions (single source of truth)
+
+This plan adds two `daemon.ServerConfig` fields. Tasks 7-10 all
+assume them:
+
+```go
+// internal/daemon/server.go — appended to ServerConfig
+type ServerConfig struct {
+    // … existing fields unchanged …
+
+    // BotKeysDir is the directory under which per-bot Passport API
+    // key plaintexts are written (mode 0600). Empty disables bot
+    // creation (the POST /v1/projects/{id}/bot handler returns 503).
+    // Wired by --bot-keys-dir in cmd/daemon/daemon.go (default:
+    // filepath.Join(config.GlobalPaths.StateDir, "bot-keys")).
+    BotKeysDir string
+
+    // Dispatcher is the optional vocabulary-driven message
+    // dispatcher (Task 8). When nil, scheduler claim/release
+    // (Task 9) and the Combine webhook (Task 10) skip outbound
+    // chat posts and continue with audit-only behaviour.
+    Dispatcher domain.BotDispatcher
+}
+```
+
+The corresponding `cmd/daemon/daemon.go` changes (Task 7's `flag` +
+viper bindings, Task 8's wiring of `bot.New(store, chatAdapter)`
+into `Dispatcher`) reference these fields by name; nothing else in
+the plan touches `ServerConfig`.
 
 **Step 4: Run test to verify it passes**
 
@@ -1533,7 +1705,7 @@ func TestBot_BindUnbind(t *testing.T) {
     }
 
     // Unbind clears the row.
-    if status, _, _ := c.DeleteJSON("/v1/projects/"+prj.ID+"/bot", nil); status != http.StatusNoContent {
+    if status, _, _ := c.DeleteJSON("/v1/projects/" + prj.ID + "/bot"); status != http.StatusNoContent {
         t.Errorf("delete bot: %d", status)
     }
     if status, _, _ := c.GetJSON("/v1/projects/"+prj.ID+"/bot", nil); status != http.StatusNotFound {
@@ -1541,7 +1713,7 @@ func TestBot_BindUnbind(t *testing.T) {
     }
 
     // Project delete now succeeds.
-    if status, _, _ := c.DeleteJSON("/v1/projects/"+prj.ID, nil); status != http.StatusNoContent {
+    if status, _, _ := c.DeleteJSON("/v1/projects/" + prj.ID); status != http.StatusNoContent {
         t.Errorf("delete project after unbind: %d", status)
     }
 }
@@ -1549,17 +1721,32 @@ func TestBot_BindUnbind(t *testing.T) {
 
 **Step 2-4** mirror earlier tasks. Implementation notes:
 
-- `POST /v1/projects/{id}/bot` validates the project exists, hashes
-  the plaintext key with `sha256.Sum256`, writes the plaintext to
-  `<botKeysDir>/<bot_id>` (0600) **before** the row is committed (so a
-  store conflict doesn't leave an orphan key file), then inserts the
-  bot row. On store failure it deletes the key file.
+- `POST /v1/projects/{id}/bot` validates the project exists, generates
+  the `bot_<uuid>` ID, hashes the plaintext key with `sha256.Sum256`,
+  then **inserts the bot row first**, **writes the key file second**.
+  Ordering rationale: an insert failure (UNIQUE conflict, constraint
+  violation, network blip) leaves no key-file droppings; a daemon
+  crash between the row insert and the file write leaves an orphan
+  row whose first use surfaces as `ErrBotKeyMissing` (a clean,
+  loggable condition, fixable by re-binding). The reverse ordering
+  (file-first) creates undetectable orphan key files on the host
+  filesystem, which is the worse failure mode. The startup sweep
+  below makes the row-first ordering self-healing.
 - `GET /v1/projects/{id}/bot` returns the row WITHOUT the hash — the
   domain type's `json:"-"` tag on `PassportAPIKeyHash` already drops
   it.
 - `DELETE /v1/projects/{id}/bot` removes the row + the key file.
   `os.Remove` errors on missing key file are tolerated (logged
   warning).
+- **Startup orphan-file sweep.** On daemon start, `cmd/daemon/daemon.go`
+  walks `<BotKeysDir>` and for each filename matching `bot_*` checks
+  whether a bot row exists with that ID. Missing rows → orphan key
+  file → log + delete. Missing files for present rows are NOT
+  deleted (the row stays so the operator can re-bind via DELETE +
+  POST). The sweep is best-effort: a single warning per orphan, no
+  blocking. Add a unit test
+  `TestBotKeys_StartupSweep_RemovesOrphans` in
+  `internal/daemon/bot_keys_test.go`.
 
 **Step 5: Commit**
 
@@ -1689,15 +1876,20 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 **Depends on:** Task 8 (Dispatcher).
 
 **Files:**
-- Modify: `internal/scheduler/scheduler.go` — add an optional
-  `BotDispatcher` hook + `ProjectByName` lookup so Acquire/Release
-  fire dispatcher events.
-- Modify: `internal/daemon/server.go` — wire the dispatcher into the
-  scheduler when both are configured.
+- Modify: `internal/scheduler/scheduler.go` — add three optional
+  hooks via `domain` ports (`BotDispatcher`, `ProjectStore`,
+  `VocabularyStore`) so Acquire fires `task_assigned` and Release
+  fires the vocabulary's declared `release_event`.
+- Modify: `internal/daemon/server.go` — wire the dispatcher + the two
+  store interfaces into the scheduler when both are configured (the
+  store already satisfies both interfaces — no extra plumbing).
 - Test: `internal/scheduler/scheduler_test.go` — extend with a fake
-  dispatcher to assert claim → `task_assigned` posted, release →
-  `task_completed` posted (or whatever the vocab's `release_event`
-  declares).
+  dispatcher + two in-mem store fakes (Project + Vocabulary) to
+  assert (a) claim → `task_assigned` dispatched with the right
+  Payload keys and (b) release → the vocabulary's `release_event`
+  dispatched (proven by a vocab whose `ReleaseEvent` is
+  `bug_resolved`, NOT `task_completed`, so the test catches a
+  hard-coded fallback).
 
 The new path in the scheduler:
 
@@ -1705,32 +1897,54 @@ The new path in the scheduler:
    string). If a project exists for that name AND the project's
    vocabulary contains a `task_assigned` event, dispatcher fires
    that event with the claim's agent name + role.
-2. Release → look up project, find vocabulary's `release_event`
-   (defaulting to `task_completed`), dispatcher fires it.
+2. Release → look up project, look up its vocabulary's
+   `ReleaseEvent` field, fire that. Fall back to `"task_completed"`
+   only when `ReleaseEvent == ""` (a defensive default for
+   vocabularies that forgot the declaration). The fallback name is
+   spelled in scheduler code only because vocabularies that omit
+   `release_event` have no other handle on Flow's release path —
+   it's a defensive constant, NOT a workflow assumption.
 
 If no project matches the AgentClaim's `Project` string, the
-scheduler logs a warning and continues — the AgentClaim/audit path
-is unaffected. This is the v1 loose coupling between AgentClaim's
-free-form `Project` field and the new `projects` table.
+scheduler logs a debug breadcrumb and continues — the AgentClaim/
+audit path is unaffected. This is the v1 loose coupling between
+AgentClaim's free-form `Project` field and the new `projects` table.
+
+#### `scheduler.Config` extension (port-typed, no `internal/bot` import)
+
+The hexagonal rule is "infra never appears in another package's
+signature — only domain ports do." `internal/scheduler/` cannot
+import `internal/bot/`. The dispatcher therefore enters as
+`domain.BotDispatcher` (the port added in Task 1).
 
 ```go
-// internal/scheduler/scheduler.go (additions)
+// internal/scheduler/scheduler.go (Config extension)
 
 type Config struct {
-    Hive       domain.HiveAgentClient
-    Audit      domain.AuditEventStore
-    Projects   domain.ProjectStore  // optional
-    Dispatcher *bot.Dispatcher      // optional
+    Hive         domain.HiveAgentClient
+    Audit        domain.AuditEventStore
+    // Optional. Both nil → scheduler runs as today (audit-only).
+    // Both non-nil → claim/release also fire vocabulary dispatch.
+    Projects     domain.ProjectStore       // optional
+    Vocabularies domain.VocabularyStore    // optional, paired with Projects
+    Dispatcher   domain.BotDispatcher      // optional, paired with the above
 }
+```
 
-// AcquireAgent (existing) — after audit row written:
+`internal/daemon/server.go` already holds the full `domain.Store`
+aggregator (which satisfies both `ProjectStore` and
+`VocabularyStore` after Task 2), so wiring is a one-liner per field
+in `NewServer`'s `scheduler.New(scheduler.Config{…})` call.
+
+#### Acquire dispatch (after audit row writes)
+
+```go
+// internal/scheduler/scheduler.go — invoked from AcquireAgent
 func (s *Scheduler) postClaimDispatch(ctx context.Context, claim *domain.AgentClaim) {
-    if s.dispatcher == nil || s.projects == nil {
-        return
-    }
+    if s.dispatcher == nil || s.projects == nil { return }
     p, err := s.projects.GetProjectByName(ctx, claim.Project)
     if err != nil {
-        log.Warn("scheduler: no project for claim", "project", claim.Project, "err", err)
+        log.Debug("scheduler: no project for claim", "project", claim.Project, "err", err)
         return
     }
     err = s.dispatcher.Dispatch(ctx, p.ID, "task_assigned", domain.VocabularyContext{
@@ -1746,7 +1960,54 @@ func (s *Scheduler) postClaimDispatch(ctx context.Context, claim *domain.AgentCl
         log.Warn("scheduler: dispatch task_assigned failed", "err", err)
     }
 }
-// (Same shape for ReleaseAgent → fire vocabulary's release_event.)
+```
+
+#### Release dispatch (after audit row writes)
+
+```go
+// internal/scheduler/scheduler.go — invoked from ReleaseAgent
+//
+// Resolution order: (1) load the project, (2) load its vocabulary
+// (we cannot ask the dispatcher because the dispatcher only knows
+// how to fire a NAMED event — it doesn't expose
+// `vocabulary.ReleaseEvent`), (3) pick the vocab's ReleaseEvent or
+// the documented "task_completed" fallback. This is the only place
+// in Flow Go code where `task_completed` appears as a literal —
+// guarded by a comment so a future grep for SDLC names finds it.
+func (s *Scheduler) postReleaseDispatch(ctx context.Context, claim *domain.AgentClaim) {
+    if s.dispatcher == nil || s.projects == nil || s.vocabularies == nil {
+        return
+    }
+    p, err := s.projects.GetProjectByName(ctx, claim.Project)
+    if err != nil {
+        log.Debug("scheduler: no project for release", "project", claim.Project, "err", err)
+        return
+    }
+    voc, err := s.vocabularies.GetVocabulary(ctx, p.VocabularyID)
+    if err != nil {
+        log.Warn("scheduler: vocab load failed for release", "vocab", p.VocabularyID, "err", err)
+        return
+    }
+    eventType := voc.ReleaseEvent
+    if eventType == "" {
+        // DEFENSIVE FALLBACK ONLY — a vocabulary that declares
+        // ReleaseEvent (every seeded one does) overrides this.
+        // Do NOT add other event-name literals to scheduler code.
+        eventType = "task_completed"
+    }
+    err = s.dispatcher.Dispatch(ctx, p.ID, eventType, domain.VocabularyContext{
+        AgentName: claim.AgentName,
+        Role:      claim.Role,
+        Payload: map[string]any{
+            "agent_id":    claim.AgentID,
+            "role":        claim.Role,
+            "workflow_id": claim.WorkflowID,
+        },
+    })
+    if err != nil {
+        log.Warn("scheduler: dispatch release_event failed", "event", eventType, "err", err)
+    }
+}
 ```
 
 The dispatcher post does NOT block / fail the claim — same swallow-
@@ -1755,13 +2016,13 @@ warn pattern as the audit path.
 **Commit:**
 
 ```
-feat(scheduler): fire vocabulary task_assigned on claim, release_event on release
+feat(scheduler): fire vocabulary events on claim and release
 
-When a project + dispatcher are configured, AcquireAgent posts the
-project vocabulary's task_assigned event after the claim audit row,
-and ReleaseAgent posts the vocabulary's declared release_event (or
-task_completed by default). Dispatch failures are logged but never
-block the scheduler primitive.
+AcquireAgent fires the project vocabulary's task_assigned event
+after the audit row; ReleaseAgent fires the vocabulary's declared
+release_event (defensive default: "task_completed"). Dispatcher,
+ProjectStore, and VocabularyStore enter scheduler.Config as
+domain ports — no internal/bot import.
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 ```
@@ -1774,20 +2035,26 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 **Files:**
 - Modify: `internal/daemon/webhook_combine.go` — accept a
-  `BotDispatcher` (currently it only takes `AuditEventStore`).
-- Modify: `internal/daemon/server.go` — pass dispatcher in.
+  `domain.BotDispatcher` and a `domain.ProjectStore` (today the
+  handler only takes `AuditEventStore`).
+- Modify: `internal/daemon/server.go` — pass `cfg.Dispatcher` and
+  `cfg.Store` (which satisfies `ProjectStore`) into
+  `HandleCombineWebhook`.
 - Test: `tests/e2e/webhook_combine_test.go` — extend an existing
   test to assert that for a project bound to the SDLC vocab, a
   `pull_request_merged` webhook produces a `merged` rendered post in
-  the FakeSharkfin recorded posts.
+  `env.Sharkfin.Messages()` whose `Body` matches the SDLC seed's
+  `merged` template and whose `Metadata["event_type"] == "merged"`.
 
 The webhook handler grows a small `repo → project_name` resolution:
 when the Combine push/merge body's `repository.name` matches a
 project's `name`, the dispatcher fires the corresponding vocabulary
-event. If no project matches, the handler is a no-op for dispatch
-(the audit row still lands, as today). This keeps the v1 coupling
-loose — the operator names the project after the repo to opt into
-dispatch.
+event. If no project matches, the handler **logs a debug
+breadcrumb** (`log.Debug("combine: no project for repo", "repo", …)`)
+so operators see why a Combine event arrived without a chat post,
+then continues — the audit row still lands, as today. This keeps
+the v1 coupling loose: operators opt into dispatch by naming the
+project after the repo.
 
 | Combine event | Vocabulary event fired | Payload metadata keys |
 |---|---|---|
@@ -1796,7 +2063,7 @@ dispatch.
 
 If the vocabulary lacks an entry (e.g. bug-tracker vocab without
 `merged`), dispatch returns `ErrEventNotInVocabulary` and the handler
-logs but still 204s.
+logs at debug + 204s.
 
 **Commit:**
 
@@ -1819,8 +2086,14 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 **Files:**
 - Modify: `internal/daemon/mcp_tools.go` — append three `s.AddTool`
-  calls. Update the comment at line 25 to read "registers all 15
-  MCP tools".
+  calls. Replace the line-25 magic-number comment ("registers all 12
+  MCP tools") with a comment that matches the call count without
+  reciting it: "registers every MCP tool the adjutant needs;
+  count is asserted in the test below". Add a co-located unit test
+  `internal/daemon/mcp_tools_test.go::TestRegisterTools_Count` that
+  introspects the `*server.MCPServer` and asserts
+  `len(srv.ListTools().Tools) == 15` so any further additions break
+  one test (here) instead of one comment + one test.
 - Test: `tests/e2e/mcp_tools_test.go` — add three test functions
   that invoke each new tool through the harness MCP wire client and
   assert the JSON shape.
@@ -1864,9 +2137,38 @@ s.AddTool(
         return jsonResult(map[string]any{"project": p, "vocabulary": v})
     },
 )
-// list_my_work_items: scans every active instance for work items where
-//   AssignedAgentID matches; returns the union.
+// list_my_work_items: backed by Store.ListWorkItemsByAgent (added
+//   in Task 2 + indexed by work_items_assigned_agent_idx in
+//   migration 003). Single indexed query — no instance scan.
+s.AddTool(
+    mcp.NewTool("list_my_work_items",
+        mcp.WithDescription("List work items currently assigned to the agent."),
+        mcp.WithString("agent_id", mcp.Required(), mcp.Description("Agent ID")),
+    ),
+    func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        agentID := req.GetString("agent_id", "")
+        items, err := deps.Store.ListWorkItemsByAgent(ctx, agentID)
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        return jsonResult(items)
+    },
+)
 // get_vocabulary: trivial wrapper over Store.GetVocabulary.
+s.AddTool(
+    mcp.NewTool("get_vocabulary",
+        mcp.WithDescription("Get a vocabulary by ID, including its event catalogue."),
+        mcp.WithString("id", mcp.Required(), mcp.Description("Vocabulary ID")),
+    ),
+    func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+        id := req.GetString("id", "")
+        v, err := deps.Store.GetVocabulary(ctx, id)
+        if err != nil {
+            return mcp.NewToolResultError(err.Error()), nil
+        }
+        return jsonResult(v)
+    },
+)
 ```
 
 **Commit:**
@@ -1888,51 +2190,67 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 **Depends on:** Tasks 3-4 (store impls).
 
 **Files:**
-- Create: `docs/examples/vocabularies/sdlc.json` (8-event SDLC catalogue
-  matching the table in "What canonical SDLC events look like" above).
-- Create: `docs/examples/vocabularies/bug-tracker.json` (5-event
-  bug-tracker catalogue).
+- Create: `docs/examples/vocabularies/sdlc.json` (9-event SDLC
+  catalogue including `task_completed` so the
+  `release_event` declaration is satisfied).
+- Create: `docs/examples/vocabularies/bug-tracker.json` (7-event
+  bug-tracker catalogue covering the full lifecycle: file → triage →
+  assign → fix-proposed → verify → close, plus reopen).
 - Modify: `cmd/admin/admin.go` — add `seed-vocabularies` subcommand
   that walks `docs/examples/vocabularies/` and inserts each vocab
-  via `Store.CreateVocabulary` (idempotent: skip if name already
-  exists). The daemon's `run()` function in `cmd/daemon/daemon.go`
-  also calls this on startup so a fresh daemon always has the SDLC
-  seed loaded — required by Task 5's e2e test.
+  via `Store.CreateVocabulary`. Idempotent: when the row already
+  exists `CreateVocabulary` returns `domain.ErrAlreadyExists` and the
+  loader logs `"vocabulary already loaded"` at debug level and
+  continues. The daemon's `run()` function in
+  `cmd/daemon/daemon.go` also calls this on startup so a fresh
+  daemon always has the SDLC seed loaded — required by Task 5's
+  e2e test.
+- Test: `cmd/admin/admin_test.go::TestSeedVocabularies_Idempotent` —
+  runs the loader twice against an in-memory sqlite store and
+  asserts (a) no error propagates from the second pass, (b) the
+  vocabulary count stays at 2, and (c) the SDLC and bug-tracker
+  vocabs are both reachable by name.
+
+ID-prefix convention. The seed files use the namespace
+`voc_builtin_*` and `ve_builtin_*` to reserve a non-collidable
+prefix; operator-supplied vocabularies (Task 5's REST `POST
+/v1/vocabularies` is out of scope, but the future Flow UI plan adds
+it) generate IDs prefixed `voc_*` without `_builtin_`.
 
 `docs/examples/vocabularies/sdlc.json`:
 
 ```json
 {
-  "id": "voc_seed_sdlc",
+  "id": "voc_builtin_sdlc",
   "name": "sdlc",
   "description": "Canonical software-delivery lifecycle vocabulary.",
   "release_event": "task_completed",
   "events": [
-    {"id": "ve_seed_sdlc_assigned", "vocabulary_id": "voc_seed_sdlc", "event_type": "task_assigned",
+    {"id": "ve_builtin_sdlc_assigned", "vocabulary_id": "voc_builtin_sdlc", "event_type": "task_assigned",
      "message_template": "Task assigned: {{.WorkItem.Title}} → {{.AgentName}} ({{.Role}})",
      "metadata_keys": ["agent_id", "role", "workflow_id"]},
-    {"id": "ve_seed_sdlc_branch", "vocabulary_id": "voc_seed_sdlc", "event_type": "branch_created",
+    {"id": "ve_builtin_sdlc_branch", "vocabulary_id": "voc_builtin_sdlc", "event_type": "branch_created",
      "message_template": "Branch created: {{index .Payload \"branch\"}}",
      "metadata_keys": ["branch", "commit_sha"]},
-    {"id": "ve_seed_sdlc_commit", "vocabulary_id": "voc_seed_sdlc", "event_type": "commit_landed",
+    {"id": "ve_builtin_sdlc_commit", "vocabulary_id": "voc_builtin_sdlc", "event_type": "commit_landed",
      "message_template": "Commit on {{index .Payload \"branch\"}}: {{index .Payload \"commit_sha\"}} by {{index .Payload \"author\"}}",
      "metadata_keys": ["branch", "commit_sha", "author"]},
-    {"id": "ve_seed_sdlc_pr", "vocabulary_id": "voc_seed_sdlc", "event_type": "pr_opened",
+    {"id": "ve_builtin_sdlc_pr", "vocabulary_id": "voc_builtin_sdlc", "event_type": "pr_opened",
      "message_template": "PR opened: #{{index .Payload \"pr_number\"}} on {{index .Payload \"branch\"}}",
      "metadata_keys": ["pr_number", "branch"]},
-    {"id": "ve_seed_sdlc_review", "vocabulary_id": "voc_seed_sdlc", "event_type": "review_requested",
+    {"id": "ve_builtin_sdlc_review", "vocabulary_id": "voc_builtin_sdlc", "event_type": "review_requested",
      "message_template": "Review requested: {{.WorkItem.Title}} (gate {{index .Payload \"gate_step_id\"}})",
      "metadata_keys": ["agent_id", "gate_step_id"]},
-    {"id": "ve_seed_sdlc_tests", "vocabulary_id": "voc_seed_sdlc", "event_type": "tests_passing",
+    {"id": "ve_builtin_sdlc_tests", "vocabulary_id": "voc_builtin_sdlc", "event_type": "tests_passing",
      "message_template": "Tests passing: {{index .Payload \"repo\"}} run {{index .Payload \"run_id\"}}",
      "metadata_keys": ["repo", "run_id"]},
-    {"id": "ve_seed_sdlc_merged", "vocabulary_id": "voc_seed_sdlc", "event_type": "merged",
+    {"id": "ve_builtin_sdlc_merged", "vocabulary_id": "voc_builtin_sdlc", "event_type": "merged",
      "message_template": "Merged PR #{{index .Payload \"pr_number\"}} → {{index .Payload \"target_branch\"}} by {{index .Payload \"merged_by\"}}",
      "metadata_keys": ["pr_number", "merged_by", "target_branch"]},
-    {"id": "ve_seed_sdlc_deployed", "vocabulary_id": "voc_seed_sdlc", "event_type": "deployed",
+    {"id": "ve_builtin_sdlc_deployed", "vocabulary_id": "voc_builtin_sdlc", "event_type": "deployed",
      "message_template": "Deployed {{index .Payload \"commit_sha\"}} to {{index .Payload \"env\"}}",
      "metadata_keys": ["commit_sha", "env"]},
-    {"id": "ve_seed_sdlc_completed", "vocabulary_id": "voc_seed_sdlc", "event_type": "task_completed",
+    {"id": "ve_builtin_sdlc_completed", "vocabulary_id": "voc_builtin_sdlc", "event_type": "task_completed",
      "message_template": "Task completed: {{.WorkItem.Title}} → {{.AgentName}}",
      "metadata_keys": ["agent_id", "role", "workflow_id"]}
   ]
@@ -1943,24 +2261,30 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 ```json
 {
-  "id": "voc_seed_bugtracker",
+  "id": "voc_builtin_bugtracker",
   "name": "bug-tracker",
-  "description": "Bug-tracker workflow vocabulary — proves the per-workflow vocab plug-in path.",
-  "release_event": "bug_resolved",
+  "description": "Bug-tracker workflow vocabulary — proves the per-workflow vocab plug-in path. Covers the full lifecycle: file, triage, assign, fix-proposed, verify, close, reopen.",
+  "release_event": "bug_closed",
   "events": [
-    {"id": "ve_seed_bug_filed", "vocabulary_id": "voc_seed_bugtracker", "event_type": "bug_filed",
+    {"id": "ve_builtin_bug_filed", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_filed",
      "message_template": "Bug filed: {{.WorkItem.Title}} (priority {{.WorkItem.Priority}})",
      "metadata_keys": ["reporter"]},
-    {"id": "ve_seed_bug_triaged", "vocabulary_id": "voc_seed_bugtracker", "event_type": "bug_triaged",
+    {"id": "ve_builtin_bug_triaged", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_triaged",
      "message_template": "Triaged: {{.WorkItem.Title}} severity {{index .Payload \"severity\"}}",
      "metadata_keys": ["severity"]},
-    {"id": "ve_seed_bug_assigned", "vocabulary_id": "voc_seed_bugtracker", "event_type": "bug_assigned",
+    {"id": "ve_builtin_bug_assigned", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_assigned",
      "message_template": "Assigned bug {{.WorkItem.Title}} → {{.AgentName}}",
      "metadata_keys": ["agent_id"]},
-    {"id": "ve_seed_bug_resolved", "vocabulary_id": "voc_seed_bugtracker", "event_type": "bug_resolved",
-     "message_template": "Resolved: {{.WorkItem.Title}} by {{.AgentName}}",
-     "metadata_keys": ["agent_id", "fix_commit"]},
-    {"id": "ve_seed_bug_reopened", "vocabulary_id": "voc_seed_bugtracker", "event_type": "bug_reopened",
+    {"id": "ve_builtin_bug_fix_proposed", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_fix_proposed",
+     "message_template": "Fix proposed for {{.WorkItem.Title}} by {{.AgentName}} (commit {{index .Payload \"commit_sha\"}})",
+     "metadata_keys": ["agent_id", "commit_sha", "branch"]},
+    {"id": "ve_builtin_bug_verified", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_verified",
+     "message_template": "Verified fix for {{.WorkItem.Title}} by {{.AgentName}}",
+     "metadata_keys": ["agent_id", "verified_in"]},
+    {"id": "ve_builtin_bug_closed", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_closed",
+     "message_template": "Closed: {{.WorkItem.Title}} (resolution {{index .Payload \"resolution\"}})",
+     "metadata_keys": ["agent_id", "resolution"]},
+    {"id": "ve_builtin_bug_reopened", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_reopened",
      "message_template": "Reopened: {{.WorkItem.Title}} (reason: {{index .Payload \"reason\"}})",
      "metadata_keys": ["reason"]}
   ]
@@ -1970,7 +2294,33 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 `cmd/admin/admin.go` gains a `seed-vocabularies` subcommand. Run on
 daemon startup from `cmd/daemon/daemon.go:run()` (after `infra.Open`,
 before `NewServer`) — best-effort, logs warnings, does not block
-startup.
+startup. Idempotent test:
+
+```go
+// cmd/admin/admin_test.go (additions)
+func TestSeedVocabularies_Idempotent(t *testing.T) {
+    store := openInMemSqlite(t)
+    // First pass: both seeds inserted.
+    if err := admin.SeedVocabularies(context.Background(), store); err != nil {
+        t.Fatalf("seed pass 1: %v", err)
+    }
+    // Second pass: no error, no duplicates.
+    if err := admin.SeedVocabularies(context.Background(), store); err != nil {
+        t.Fatalf("seed pass 2: %v", err)
+    }
+    vocs, err := store.ListVocabularies(context.Background())
+    if err != nil { t.Fatalf("list: %v", err) }
+    if len(vocs) != 2 {
+        t.Errorf("expected 2 vocabularies after two-pass seed, got %d", len(vocs))
+    }
+    if _, err := store.GetVocabularyByName(context.Background(), "sdlc"); err != nil {
+        t.Errorf("sdlc seed missing: %v", err)
+    }
+    if _, err := store.GetVocabularyByName(context.Background(), "bug-tracker"); err != nil {
+        t.Errorf("bug-tracker seed missing: %v", err)
+    }
+}
+```
 
 **Commit:**
 
@@ -1993,9 +2343,11 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 
 **Files:**
 - Create: `tests/e2e/bot_vocabulary_test.go`.
-- Modify: `tests/e2e/harness/fake_sharkfin.go` — ensure
-  `RecordedPosts()` returns enough metadata to assert against
-  (channel, content, metadata bytes). If it already does, no change.
+
+No harness changes. `tests/e2e/harness/fake_sharkfin.go` already
+exposes `Messages() []SharkfinMessage` where each message has
+`Channel`, `Body`, and `Metadata map[string]any` — sufficient for
+every assertion below.
 
 The new test extends Plan B's `bot_lifecycle_test.go` flow with
 project + vocabulary + bot machinery:
@@ -2017,25 +2369,81 @@ import (
 // TestBotVocabulary_SDLCRoundTrip drives the canonical SDLC loop
 // through the new project + bot + vocabulary surface and asserts:
 //
-//   - On Scheduler claim, FakeSharkfin received the rendered
-//     "Task assigned: ..." string with metadata.event_type ==
-//     "task_assigned" on the project's channel.
-//   - On Combine pull_request_merged webhook, FakeSharkfin received
-//     the rendered "Merged PR #..." string with
-//     metadata.event_type == "merged".
-//   - On Scheduler release, FakeSharkfin received the rendered
-//     "Task completed: ..." string.
+//   - On Scheduler claim, env.Sharkfin.Messages() now contains a
+//     SharkfinMessage on the project's channel whose Body matches
+//     the SDLC seed's "Task assigned: <title> → <agent> (<role>)"
+//     rendering and whose Metadata["event_type"] == "task_assigned".
+//   - On the combine pull_request_merged webhook, the recorded
+//     Messages contain a "Merged PR #...→ ... by ..." Body with
+//     Metadata["event_type"] == "merged".
+//   - On Scheduler release, the recorded Messages contain
+//     "Task completed: <title> → <agent>" with
+//     Metadata["event_type"] == "task_completed".
 //   - GET /v1/projects/{id}/audit returns ONLY the project's events.
-func TestBotVocabulary_SDLCRoundTrip(t *testing.T) { /* full impl */ }
+func TestBotVocabulary_SDLCRoundTrip(t *testing.T) {
+    // Setup: env, JWT-auth client, seed pool agent, create the
+    // "flow" project (vocab defaults to SDLC seed).
+    // Step 1: claim via /v1/scheduler/_diag/claim.
+    // Step 2: assert env.Sharkfin.Messages()[0].Body has
+    //         "Task assigned" prefix and Metadata["event_type"] ==
+    //         "task_assigned".
+    // Step 3: POST /v1/webhooks/combine with a pull_request_merged
+    //         payload whose repository.name == "flow".
+    // Step 4: assert env.Sharkfin.Messages() now contains a
+    //         "Merged PR #" message with event_type == "merged".
+    // Step 5: release via /v1/scheduler/_diag/release.
+    // Step 6: assert "Task completed" message with event_type ==
+    //         "task_completed".
+    // Step 7: GET /v1/projects/<id>/audit and assert only the
+    //         flow-project events appear.
+}
 
 // TestBotVocabulary_BugTrackerVocabPlugIn proves the per-workflow
-// plug-in path:
-//
-//   - Create a second project bound to the bug-tracker vocabulary.
-//   - Drive a claim/release for that project's name.
-//   - Assert the recorded posts use the bug-tracker template strings
-//     (Bug filed:, Resolved:), not the SDLC strings.
-func TestBotVocabulary_BugTrackerVocabPlugIn(t *testing.T) { /* full impl */ }
+// plug-in path drives the FULL bug lifecycle. Asserts the
+// bug-tracker vocab fires for every step of
+// `bug_filed → bug_fix_proposed → bug_verified → bug_closed` and
+// the recorded messages render with bug-tracker templates, never
+// SDLC.
+func TestBotVocabulary_BugTrackerVocabPlugIn(t *testing.T) {
+    // Setup: env, client, seed pool agent.
+    // Step 1: create a second project "tracker" bound to the
+    //         bug-tracker vocabulary (POST /v1/projects with
+    //         vocabulary_id resolved from
+    //         GET /v1/vocabularies → name=="bug-tracker").
+    // Step 2: claim for project="tracker" — assert the rendered
+    //         message Body starts with "Bug filed:" or with the
+    //         vocab's task_assigned-equivalent. The bug-tracker
+    //         vocab does NOT define task_assigned, so the
+    //         dispatcher returns ErrEventNotInVocabulary and the
+    //         scheduler logs without posting; Messages() count for
+    //         #tracker channel stays at 0 after claim.
+    // Step 3: POST /v1/webhooks/combine with a `push` event for
+    //         repo "tracker" — vocab does not define commit_landed,
+    //         again no post; audit still records.
+    // Step 4: drive the explicit lifecycle via direct dispatcher
+    //         calls (the test obtains a *bot.Dispatcher over the
+    //         daemon's store + a small chat-fake; OR uses a
+    //         dedicated /v1/_diag/dispatch test endpoint added in
+    //         this task only behind a build tag — pick one and keep
+    //         it inside the test package). Fire bug_filed →
+    //         bug_fix_proposed → bug_verified → bug_closed.
+    // Step 5: assert env.Sharkfin.Messages() on the #tracker
+    //         channel contains exactly 4 messages whose Bodies
+    //         match the bug-tracker seed templates (substring
+    //         "Bug filed:", "Fix proposed for", "Verified fix for",
+    //         "Closed:") and whose Metadata["event_type"] values
+    //         are exactly bug_filed, bug_fix_proposed,
+    //         bug_verified, bug_closed in that order.
+    // Step 6: assert NONE of those messages contain SDLC
+    //         template substrings ("Task assigned:",
+    //         "Task completed:", "Merged PR").
+    // Step 7: release the claim — bug_closed is the vocab's
+    //         release_event, so the scheduler-driven release path
+    //         re-fires bug_closed via the post-release dispatch;
+    //         assert exactly one new "Closed:" message appears
+    //         (or, if the test pre-fired bug_closed in Step 4,
+    //         assert two total bug_closed messages).
+}
 ```
 
 Both tests run on both backends.
@@ -2073,11 +2481,18 @@ Run after Task 13 lands:
       empty).
 - [ ] `docs/examples/vocabularies/sdlc.json` and
       `bug-tracker.json` exist; daemon startup loads them
-      idempotently (verify with two consecutive starts — second log
-      shows "vocabulary already loaded" warnings or silent skip).
-- [ ] `internal/daemon/mcp_tools.go:25` comment reads "registers all
-      15 MCP tools" and the file contains exactly 15 `s.AddTool(`
-      invocations.
+      idempotently (verify with `TestSeedVocabularies_Idempotent`
+      green and a second daemon start showing the
+      "vocabulary already loaded" debug log).
+- [ ] `TestRegisterTools_Count` (Task 11) green, asserting
+      `len(srv.ListTools().Tools) == 15`. Manual `s.AddTool(` count
+      check is no longer the source of truth — the test is.
+- [ ] `internal/scheduler/scheduler.go` does NOT import
+      `internal/bot` (`grep '"github.com/Work-Fort/Flow/internal/bot"'
+      internal/scheduler/` returns empty). Dispatcher enters via
+      the `domain.BotDispatcher` port only.
+- [ ] No `t.Parallel()` calls added in any new e2e test (matches
+      the existing harness convention — each daemon spawn is ~200 ms).
 - [ ] Commit log: every commit on the branch is conventional
       multi-line with `Co-Authored-By: Claude Sonnet 4.6
       <noreply@anthropic.com>`, no `!` markers, no
