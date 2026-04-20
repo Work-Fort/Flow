@@ -2,7 +2,7 @@
 type: plan
 step: "fix"
 title: "Use no-op audit store in TestRenewer_WaitIdleRaceUnderLoad"
-status: approved
+status: complete
 assessment_status: complete
 provenance:
   source: issue
@@ -11,7 +11,7 @@ provenance:
 dates:
   created: "2026-04-19"
   approved: "2026-04-19"
-  completed: null
+  completed: "2026-04-19"
 related_plans:
   - "2026-04-19-renewer-waitidle-flake.md"
   - "2026-04-19-renewer-test-budget.md"
