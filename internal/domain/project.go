@@ -4,12 +4,13 @@ package domain
 import "time"
 
 type Project struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description,omitempty"`
-	TemplateID   string    `json:"template_id,omitempty"`
-	ChannelName  string    `json:"channel_name"`
-	VocabularyID string    `json:"vocabulary_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description,omitempty"`
+	TemplateID    string    `json:"template_id,omitempty"`
+	ChannelName   string    `json:"channel_name"`
+	VocabularyID  string    `json:"vocabulary_id"`
+	RetentionDays *int      `json:"retention_days,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

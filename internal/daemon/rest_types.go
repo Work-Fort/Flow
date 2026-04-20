@@ -264,14 +264,15 @@ type RejectWorkItemInput struct {
 // --- projects ---
 
 type projectResponse struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	Description  string    `json:"description,omitempty"`
-	TemplateID   string    `json:"template_id,omitempty"`
-	ChannelName  string    `json:"channel_name"`
-	VocabularyID string    `json:"vocabulary_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Description   string    `json:"description,omitempty"`
+	TemplateID    string    `json:"template_id,omitempty"`
+	ChannelName   string    `json:"channel_name"`
+	VocabularyID  string    `json:"vocabulary_id"`
+	RetentionDays *int      `json:"retention_days,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type ProjectOutput struct {
@@ -289,6 +290,7 @@ type CreateProjectInput struct {
 		TemplateID           string `json:"template_id,omitempty" doc:"Workflow template ID"`
 		ChannelName          string `json:"channel_name" doc:"Sharkfin channel name" minLength:"1"`
 		VocabularyID         string `json:"vocabulary_id,omitempty" doc:"Vocabulary ID (defaults to SDLC)"`
+		RetentionDays        *int   `json:"retention_days,omitempty" doc:"Audit log retention in days (nil = permanent)"`
 		ChannelAlreadyExists bool   `json:"channel_already_exists,omitempty" doc:"Skip CreateChannel call (use when channel was already created)"`
 	}
 }
@@ -296,11 +298,14 @@ type CreateProjectInput struct {
 type PatchProjectInput struct {
 	ID   string `path:"id"`
 	Body struct {
-		Name         string `json:"name,omitempty" doc:"Project name"`
-		Description  string `json:"description,omitempty" doc:"Project description"`
-		TemplateID   string `json:"template_id,omitempty" doc:"Workflow template ID"`
-		ChannelName  string `json:"channel_name,omitempty" doc:"Sharkfin channel name"`
-		VocabularyID string `json:"vocabulary_id,omitempty" doc:"Vocabulary ID"`
+		Name          string `json:"name,omitempty" doc:"Project name"`
+		Description   string `json:"description,omitempty" doc:"Project description"`
+		TemplateID    string `json:"template_id,omitempty" doc:"Workflow template ID"`
+		ChannelName   string `json:"channel_name,omitempty" doc:"Sharkfin channel name"`
+		VocabularyID  string `json:"vocabulary_id,omitempty" doc:"Vocabulary ID"`
+		RetentionDays *int   `json:"retention_days,omitempty" doc:"Audit log retention in days (nil = permanent)"`
+		// ClearRetentionDays when true resets retention_days to NULL (permanent).
+		ClearRetentionDays bool `json:"clear_retention_days,omitempty" doc:"Set to true to remove the retention window"`
 	}
 }
 

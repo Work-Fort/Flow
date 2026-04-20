@@ -11,7 +11,7 @@ import (
 	"github.com/Work-Fort/Flow/internal/domain"
 )
 
-const projectCols = "id, name, description, template_id, channel_name, vocabulary_id, created_at, updated_at"
+const projectCols = "id, name, description, template_id, channel_name, vocabulary_id, retention_days, created_at, updated_at"
 
 func (s *Store) CreateProject(ctx context.Context, p *domain.Project) error {
 	now := time.Now().UTC()
@@ -22,9 +22,9 @@ func (s *Store) CreateProject(ctx context.Context, p *domain.Project) error {
 		p.UpdatedAt = now
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO projects (`+projectCols+`) VALUES (?,?,?,?,?,?,?,?)`,
+		`INSERT INTO projects (`+projectCols+`) VALUES (?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.Name, p.Description, p.TemplateID, p.ChannelName, p.VocabularyID,
-		p.CreatedAt, p.UpdatedAt)
+		p.RetentionDays, p.CreatedAt, p.UpdatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: project %q", domain.ErrAlreadyExists, p.Name)
@@ -65,8 +65,8 @@ func (s *Store) ListProjects(ctx context.Context) ([]*domain.Project, error) {
 func (s *Store) UpdateProject(ctx context.Context, p *domain.Project) error {
 	p.UpdatedAt = time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE projects SET name=?, description=?, template_id=?, channel_name=?, vocabulary_id=?, updated_at=? WHERE id=?`,
-		p.Name, p.Description, p.TemplateID, p.ChannelName, p.VocabularyID, p.UpdatedAt, p.ID)
+		`UPDATE projects SET name=?, description=?, template_id=?, channel_name=?, vocabulary_id=?, retention_days=?, updated_at=? WHERE id=?`,
+		p.Name, p.Description, p.TemplateID, p.ChannelName, p.VocabularyID, p.RetentionDays, p.UpdatedAt, p.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("%w: project %q", domain.ErrAlreadyExists, p.Name)
@@ -106,7 +106,7 @@ func (s *Store) scanProject(r rowScanner) (*domain.Project, error) {
 	var p domain.Project
 	var created, updated time.Time
 	err := r.Scan(&p.ID, &p.Name, &p.Description, &p.TemplateID, &p.ChannelName,
-		&p.VocabularyID, &created, &updated)
+		&p.VocabularyID, &p.RetentionDays, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: project", domain.ErrNotFound)
 	}

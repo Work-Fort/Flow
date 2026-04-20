@@ -47,12 +47,13 @@ func registerProjectRoutes(api huma.API, store domain.Store, botKeysDir string, 
 			vocID = sdlc.ID
 		}
 		p := &domain.Project{
-			ID:           NewID("prj"),
-			Name:         input.Body.Name,
-			Description:  input.Body.Description,
-			TemplateID:   input.Body.TemplateID,
-			ChannelName:  input.Body.ChannelName,
-			VocabularyID: vocID,
+			ID:            NewID("prj"),
+			Name:          input.Body.Name,
+			Description:   input.Body.Description,
+			TemplateID:    input.Body.TemplateID,
+			ChannelName:   input.Body.ChannelName,
+			VocabularyID:  vocID,
+			RetentionDays: input.Body.RetentionDays,
 		}
 		if err := store.CreateProject(ctx, p); err != nil {
 			return nil, mapDomainErr(err)
@@ -115,6 +116,12 @@ func registerProjectRoutes(api huma.API, store domain.Store, botKeysDir string, 
 		if input.Body.VocabularyID != "" {
 			existing.VocabularyID = input.Body.VocabularyID
 		}
+		if input.Body.RetentionDays != nil {
+			existing.RetentionDays = input.Body.RetentionDays
+		}
+		if input.Body.ClearRetentionDays {
+			existing.RetentionDays = nil
+		}
 		if err := store.UpdateProject(ctx, existing); err != nil {
 			return nil, mapDomainErr(err)
 		}
@@ -176,14 +183,15 @@ func registerProjectRoutes(api huma.API, store domain.Store, botKeysDir string, 
 
 func projectToResponse(p *domain.Project) projectResponse {
 	return projectResponse{
-		ID:           p.ID,
-		Name:         p.Name,
-		Description:  p.Description,
-		TemplateID:   p.TemplateID,
-		ChannelName:  p.ChannelName,
-		VocabularyID: p.VocabularyID,
-		CreatedAt:    p.CreatedAt,
-		UpdatedAt:    p.UpdatedAt,
+		ID:            p.ID,
+		Name:          p.Name,
+		Description:   p.Description,
+		TemplateID:    p.TemplateID,
+		ChannelName:   p.ChannelName,
+		VocabularyID:  p.VocabularyID,
+		RetentionDays: p.RetentionDays,
+		CreatedAt:     p.CreatedAt,
+		UpdatedAt:     p.UpdatedAt,
 	}
 }
 
