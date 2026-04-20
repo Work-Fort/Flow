@@ -194,11 +194,15 @@ func (f *fakeProjectStore) GetProjectByName(_ context.Context, name string) (*do
 	return nil, domain.ErrNotFound
 }
 
-func (f *fakeProjectStore) CreateProject(_ context.Context, _ *domain.Project) error              { return nil }
-func (f *fakeProjectStore) GetProject(_ context.Context, _ string) (*domain.Project, error)       { return nil, domain.ErrNotFound }
-func (f *fakeProjectStore) ListProjects(_ context.Context) ([]*domain.Project, error)             { return nil, nil }
-func (f *fakeProjectStore) UpdateProject(_ context.Context, _ *domain.Project) error              { return nil }
-func (f *fakeProjectStore) DeleteProject(_ context.Context, _ string) error                       { return nil }
+func (f *fakeProjectStore) CreateProject(_ context.Context, _ *domain.Project) error { return nil }
+func (f *fakeProjectStore) GetProject(_ context.Context, _ string) (*domain.Project, error) {
+	return nil, domain.ErrNotFound
+}
+func (f *fakeProjectStore) ListProjects(_ context.Context) ([]*domain.Project, error) {
+	return nil, nil
+}
+func (f *fakeProjectStore) UpdateProject(_ context.Context, _ *domain.Project) error { return nil }
+func (f *fakeProjectStore) DeleteProject(_ context.Context, _ string) error          { return nil }
 
 type fakeVocabStore struct {
 	byID map[string]*domain.Vocabulary
@@ -215,8 +219,10 @@ func (f *fakeVocabStore) GetVocabularyByName(_ context.Context, _ string) (*doma
 	return nil, domain.ErrNotFound
 }
 
-func (f *fakeVocabStore) CreateVocabulary(_ context.Context, _ *domain.Vocabulary) error         { return nil }
-func (f *fakeVocabStore) ListVocabularies(_ context.Context) ([]*domain.Vocabulary, error)       { return nil, nil }
+func (f *fakeVocabStore) CreateVocabulary(_ context.Context, _ *domain.Vocabulary) error { return nil }
+func (f *fakeVocabStore) ListVocabularies(_ context.Context) ([]*domain.Vocabulary, error) {
+	return nil, nil
+}
 
 type capturingDispatcher struct {
 	calls []dispatchCall
