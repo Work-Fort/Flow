@@ -180,3 +180,157 @@ func TestScheduler_AcquireReturnsErrPoolExhaustedAfterAllRetries(t *testing.T) {
 		t.Errorf("ActiveClaims should be empty after failed acquire")
 	}
 }
+
+// --- dispatcher integration tests ---
+
+type fakeProjectStore struct {
+	byName map[string]*domain.Project
+}
+
+func (f *fakeProjectStore) GetProjectByName(_ context.Context, name string) (*domain.Project, error) {
+	if p, ok := f.byName[name]; ok {
+		return p, nil
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (f *fakeProjectStore) CreateProject(_ context.Context, _ *domain.Project) error              { return nil }
+func (f *fakeProjectStore) GetProject(_ context.Context, _ string) (*domain.Project, error)       { return nil, domain.ErrNotFound }
+func (f *fakeProjectStore) ListProjects(_ context.Context) ([]*domain.Project, error)             { return nil, nil }
+func (f *fakeProjectStore) UpdateProject(_ context.Context, _ *domain.Project) error              { return nil }
+func (f *fakeProjectStore) DeleteProject(_ context.Context, _ string) error                       { return nil }
+
+type fakeVocabStore struct {
+	byID map[string]*domain.Vocabulary
+}
+
+func (f *fakeVocabStore) GetVocabulary(_ context.Context, id string) (*domain.Vocabulary, error) {
+	if v, ok := f.byID[id]; ok {
+		return v, nil
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (f *fakeVocabStore) GetVocabularyByName(_ context.Context, _ string) (*domain.Vocabulary, error) {
+	return nil, domain.ErrNotFound
+}
+
+func (f *fakeVocabStore) CreateVocabulary(_ context.Context, _ *domain.Vocabulary) error         { return nil }
+func (f *fakeVocabStore) ListVocabularies(_ context.Context) ([]*domain.Vocabulary, error)       { return nil, nil }
+
+type capturingDispatcher struct {
+	calls []dispatchCall
+}
+
+type dispatchCall struct {
+	projectID string
+	eventType string
+	ctx       domain.VocabularyContext
+}
+
+func (d *capturingDispatcher) Dispatch(_ context.Context, projectID, eventType string, ctx domain.VocabularyContext) error {
+	d.calls = append(d.calls, dispatchCall{projectID: projectID, eventType: eventType, ctx: ctx})
+	return nil
+}
+
+func TestScheduler_ClaimFiresTaskAssignedDispatch(t *testing.T) {
+	ctx := context.Background()
+	audit := newAuditStore(t)
+
+	vocab := &domain.Vocabulary{
+		ID:           "voc_test",
+		Name:         "test",
+		ReleaseEvent: "task_completed",
+		Events: []domain.VocabularyEvent{
+			{EventType: "task_assigned", MessageTemplate: "assigned"},
+		},
+	}
+	prj := &domain.Project{ID: "prj_1", Name: "my-project", VocabularyID: vocab.ID}
+	projects := &fakeProjectStore{byName: map[string]*domain.Project{prj.Name: prj}}
+	vocabs := &fakeVocabStore{byID: map[string]*domain.Vocabulary{vocab.ID: vocab}}
+	disp := &capturingDispatcher{}
+
+	expiry := time.Now().UTC().Add(time.Minute)
+	hive := &fakeHive{
+		claimResponses: []claimResp{
+			{agent: &domain.HiveAgent{ID: "a_1", Name: "agent-1", LeaseExpiresAt: expiry}},
+		},
+	}
+	sch := scheduler.New(scheduler.Config{
+		Hive:            hive,
+		Audit:           audit,
+		Projects:        projects,
+		Vocabularies:    vocabs,
+		Dispatcher:      disp,
+		MaxClaimRetries: 1,
+		BackoffBase:     1 * time.Millisecond,
+	})
+
+	claim, err := sch.AcquireAgent(ctx, "developer", "my-project", "wf-disp-1", time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireAgent: %v", err)
+	}
+	if len(disp.calls) != 1 {
+		t.Fatalf("dispatch calls after claim: got %d, want 1", len(disp.calls))
+	}
+	if disp.calls[0].eventType != "task_assigned" {
+		t.Errorf("event type = %q, want task_assigned", disp.calls[0].eventType)
+	}
+	if disp.calls[0].ctx.AgentName != "agent-1" {
+		t.Errorf("agent name = %q, want agent-1", disp.calls[0].ctx.AgentName)
+	}
+	_ = claim
+}
+
+func TestScheduler_ReleaseFiresVocabReleaseEvent(t *testing.T) {
+	ctx := context.Background()
+	audit := newAuditStore(t)
+
+	// Use a vocab whose ReleaseEvent is "bug_resolved", NOT "task_completed",
+	// so the test catches a hard-coded SDLC fallback.
+	vocab := &domain.Vocabulary{
+		ID:           "voc_bug",
+		Name:         "bug-tracker",
+		ReleaseEvent: "bug_resolved",
+		Events: []domain.VocabularyEvent{
+			{EventType: "task_assigned", MessageTemplate: "assigned"},
+			{EventType: "bug_resolved", MessageTemplate: "resolved"},
+		},
+	}
+	prj := &domain.Project{ID: "prj_2", Name: "bug-project", VocabularyID: vocab.ID}
+	projects := &fakeProjectStore{byName: map[string]*domain.Project{prj.Name: prj}}
+	vocabs := &fakeVocabStore{byID: map[string]*domain.Vocabulary{vocab.ID: vocab}}
+	disp := &capturingDispatcher{}
+
+	expiry := time.Now().UTC().Add(time.Minute)
+	hive := &fakeHive{
+		claimResponses: []claimResp{
+			{agent: &domain.HiveAgent{ID: "a_2", Name: "agent-2", LeaseExpiresAt: expiry}},
+		},
+	}
+	sch := scheduler.New(scheduler.Config{
+		Hive:            hive,
+		Audit:           audit,
+		Projects:        projects,
+		Vocabularies:    vocabs,
+		Dispatcher:      disp,
+		MaxClaimRetries: 1,
+		BackoffBase:     1 * time.Millisecond,
+	})
+
+	claim, err := sch.AcquireAgent(ctx, "developer", "bug-project", "wf-bug-1", time.Minute)
+	if err != nil {
+		t.Fatalf("AcquireAgent: %v", err)
+	}
+	if err := sch.ReleaseAgent(ctx, claim); err != nil {
+		t.Fatalf("ReleaseAgent: %v", err)
+	}
+
+	// Two dispatches: task_assigned on claim, bug_resolved on release.
+	if len(disp.calls) != 2 {
+		t.Fatalf("dispatch calls: got %d, want 2 (claim+release)", len(disp.calls))
+	}
+	if disp.calls[1].eventType != "bug_resolved" {
+		t.Errorf("release event type = %q, want bug_resolved (not task_completed)", disp.calls[1].eventType)
+	}
+}

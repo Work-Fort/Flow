@@ -114,8 +114,11 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	var sch *scheduler.Scheduler
 	if hiveAgentClient != nil {
 		sch = scheduler.New(scheduler.Config{
-			Hive:  hiveAgentClient,
-			Audit: cfg.Store,
+			Hive:         hiveAgentClient,
+			Audit:        cfg.Store,
+			Projects:     cfg.Store,
+			Vocabularies: cfg.Store,
+			Dispatcher:   cfg.Dispatcher,
 		})
 	}
 
