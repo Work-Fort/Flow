@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+#MISE description="Build the Flow web UI (Vite → web/dist)"
+#MISE sources=["web/src/**", "web/index.html", "web/vite.config.ts", "web/package.json"]
+#MISE outputs=["web/dist/remoteEntry.js"]
+set -euo pipefail
+cd web
+pnpm install --frozen-lockfile
+pnpm build

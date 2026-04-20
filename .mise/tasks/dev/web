@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+#MISE description="Run the Vite dev server for the Flow UI"
+set -euo pipefail
+cd web
+pnpm install --frozen-lockfile
+pnpm dev

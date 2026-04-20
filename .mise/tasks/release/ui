@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+#MISE description="Build flow with the UI build tag (embeds web/dist)"
+#MISE depends=["build:web"]
+#MISE sources=["**/*.go", "go.mod", "go.sum", "web/dist/remoteEntry.js"]
+#MISE outputs=["build/flow-ui"]
+set -euo pipefail
+BUILD_DIR=build
+GIT_SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+VERSION="${VERSION:-dev-$GIT_SHORT_SHA}"
+mkdir -p "$BUILD_DIR"
+CGO_ENABLED=0 go build -tags ui -trimpath \
+    -ldflags "-s -w -X github.com/Work-Fort/Flow/cmd.Version=$VERSION" \
+    -o "$BUILD_DIR/flow-ui"
+echo "Built $BUILD_DIR/flow-ui (with embedded UI)"

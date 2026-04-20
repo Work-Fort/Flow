@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-2.0-only
+#MISE description="Remove web build artefacts"
+set -euo pipefail
+rm -rf web/dist web/node_modules

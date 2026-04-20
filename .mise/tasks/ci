@@ -3,6 +3,7 @@
 #MISE description="Run all CI checks serially (lint -> test -> e2e). The CI workflow's matrix runs the same children in parallel jobs; release.yaml runs this single-job aggregator and depends on serial execution to avoid PG/daemon contention."
 set -euo pipefail
 
-mise run lint
+mise run lint:go
+mise run lint:web
 mise run test
 mise run e2e
