@@ -37,6 +37,8 @@ func mapDomainErr(err error) error {
 		return huma.NewError(http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, domain.ErrPermissionDenied):
 		return huma.NewError(http.StatusForbidden, err.Error())
+	case errors.Is(err, domain.ErrProjectHasBot):
+		return huma.NewError(http.StatusConflict, err.Error())
 	default:
 		return huma.NewError(http.StatusInternalServerError, "internal error")
 	}

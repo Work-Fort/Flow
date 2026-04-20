@@ -261,6 +261,119 @@ type RejectWorkItemInput struct {
 	}
 }
 
+// --- projects ---
+
+type projectResponse struct {
+	ID           string    `json:"id"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description,omitempty"`
+	TemplateID   string    `json:"template_id,omitempty"`
+	ChannelName  string    `json:"channel_name"`
+	VocabularyID string    `json:"vocabulary_id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+type ProjectOutput struct {
+	Body projectResponse
+}
+
+type ProjectListOutput struct {
+	Body []projectResponse
+}
+
+type CreateProjectInput struct {
+	Body struct {
+		Name         string `json:"name" doc:"Project name" minLength:"1"`
+		Description  string `json:"description,omitempty" doc:"Project description"`
+		TemplateID   string `json:"template_id,omitempty" doc:"Workflow template ID"`
+		ChannelName  string `json:"channel_name" doc:"Sharkfin channel name" minLength:"1"`
+		VocabularyID string `json:"vocabulary_id,omitempty" doc:"Vocabulary ID (defaults to SDLC)"`
+	}
+}
+
+type PatchProjectInput struct {
+	ID   string `path:"id"`
+	Body struct {
+		Name         string `json:"name,omitempty" doc:"Project name"`
+		Description  string `json:"description,omitempty" doc:"Project description"`
+		TemplateID   string `json:"template_id,omitempty" doc:"Workflow template ID"`
+		ChannelName  string `json:"channel_name,omitempty" doc:"Sharkfin channel name"`
+		VocabularyID string `json:"vocabulary_id,omitempty" doc:"Vocabulary ID"`
+	}
+}
+
+// --- bots ---
+
+type botResponse struct {
+	ID                  string    `json:"id"`
+	ProjectID           string    `json:"project_id"`
+	PassportAPIKeyID    string    `json:"passport_api_key_id"`
+	HiveRoleAssignments []string  `json:"hive_role_assignments"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+}
+
+type BotOutput struct {
+	Body botResponse
+}
+
+type CreateBotInput struct {
+	ID   string `path:"id" doc:"Project ID"`
+	Body struct {
+		PassportAPIKey      string   `json:"passport_api_key" doc:"Passport API key plaintext (stored hashed; not returned)" minLength:"1"`
+		PassportAPIKeyID    string   `json:"passport_api_key_id" doc:"Passport key ID" minLength:"1"`
+		HiveRoleAssignments []string `json:"hive_role_assignments,omitempty" doc:"Hive role IDs the bot may claim for"`
+	}
+}
+
+// --- vocabularies ---
+
+type vocabularyEventResponse struct {
+	ID              string   `json:"id"`
+	VocabularyID    string   `json:"vocabulary_id"`
+	EventType       string   `json:"event_type"`
+	MessageTemplate string   `json:"message_template"`
+	MetadataKeys    []string `json:"metadata_keys,omitempty"`
+}
+
+type vocabularyResponse struct {
+	ID           string                    `json:"id"`
+	Name         string                    `json:"name"`
+	Description  string                    `json:"description,omitempty"`
+	ReleaseEvent string                    `json:"release_event,omitempty"`
+	Events       []vocabularyEventResponse `json:"events,omitempty"`
+	CreatedAt    time.Time                 `json:"created_at"`
+	UpdatedAt    time.Time                 `json:"updated_at"`
+}
+
+type VocabularyOutput struct {
+	Body vocabularyResponse
+}
+
+type VocabularyListOutput struct {
+	Body []vocabularyResponse
+}
+
+// --- audit ---
+
+type auditEventResponse struct {
+	ID         string    `json:"id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	Type       string    `json:"type"`
+	AgentID    string    `json:"agent_id"`
+	AgentName  string    `json:"agent_name,omitempty"`
+	WorkflowID string    `json:"workflow_id,omitempty"`
+	Role       string    `json:"role,omitempty"`
+	Project    string    `json:"project,omitempty"`
+}
+
+type ProjectAuditOutput struct {
+	Body struct {
+		Events []auditEventResponse `json:"events"`
+	}
+}
+
 // --- approvals ---
 
 type approvalResponse struct {

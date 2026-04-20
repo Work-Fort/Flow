@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"github.com/Work-Fort/Flow/cmd/admin"
 	"github.com/Work-Fort/Flow/internal/config"
 	flowDaemon "github.com/Work-Fort/Flow/internal/daemon"
 	"github.com/Work-Fort/Flow/internal/infra"
@@ -94,6 +95,10 @@ func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhook
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer store.Close()
+
+	if err := admin.SeedVocabularies(context.Background(), store); err != nil {
+		return fmt.Errorf("seed vocabularies: %w", err)
+	}
 
 	health.RegisterPeriodicCheck("db", func(ctx context.Context) flowDaemon.CheckResult {
 		if err := store.Ping(ctx); err != nil {

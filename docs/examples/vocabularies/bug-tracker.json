@@ -1,0 +1,29 @@
+{
+  "id": "voc_builtin_bugtracker",
+  "name": "bug-tracker",
+  "description": "Bug-tracker workflow vocabulary — proves the per-workflow vocab plug-in path. Covers the full lifecycle: file, triage, assign, fix-proposed, verify, close, reopen.",
+  "release_event": "bug_closed",
+  "events": [
+    {"id": "ve_builtin_bug_filed", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_filed",
+     "message_template": "Bug filed: {{.WorkItem.Title}} (priority {{.WorkItem.Priority}})",
+     "metadata_keys": ["reporter"]},
+    {"id": "ve_builtin_bug_triaged", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_triaged",
+     "message_template": "Triaged: {{.WorkItem.Title}} severity {{index .Payload \"severity\"}}",
+     "metadata_keys": ["severity"]},
+    {"id": "ve_builtin_bug_assigned", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_assigned",
+     "message_template": "Assigned bug {{.WorkItem.Title}} → {{.AgentName}}",
+     "metadata_keys": ["agent_id"]},
+    {"id": "ve_builtin_bug_fix_proposed", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_fix_proposed",
+     "message_template": "Fix proposed for {{.WorkItem.Title}} by {{.AgentName}} (commit {{index .Payload \"commit_sha\"}})",
+     "metadata_keys": ["agent_id", "commit_sha", "branch"]},
+    {"id": "ve_builtin_bug_verified", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_verified",
+     "message_template": "Verified fix for {{.WorkItem.Title}} by {{.AgentName}}",
+     "metadata_keys": ["agent_id", "verified_in"]},
+    {"id": "ve_builtin_bug_closed", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_closed",
+     "message_template": "Closed: {{.WorkItem.Title}} (resolution {{index .Payload \"resolution\"}})",
+     "metadata_keys": ["agent_id", "resolution"]},
+    {"id": "ve_builtin_bug_reopened", "vocabulary_id": "voc_builtin_bugtracker", "event_type": "bug_reopened",
+     "message_template": "Reopened: {{.WorkItem.Title}} (reason: {{index .Payload \"reason\"}})",
+     "metadata_keys": ["reason"]}
+  ]
+}

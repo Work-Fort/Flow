@@ -40,20 +40,16 @@ type combineMergePayload struct {
 
 // HandleCombineWebhook returns the http.Handler mounted at
 // POST /v1/webhooks/combine. It audits push and pull_request_merged
-// events and 204s every other Combine event type.
+// events and dispatches to the project bot's vocabulary when a project
+// matching the repo name exists.
 //
 // Combine's webhook discriminator is the X-SoftServe-Event header
 // (combine/lead/internal/infra/webhook/webhook.go:117). Audit failures
-// are logged but never block the response — the bot-vocabulary plan
-// will layer real dispatch on top of this audit foundation.
+// are logged but never block the response.
 //
 // audit may be nil (e.g. tests / early bring-up); the handler then
 // drops the event and still 204s.
-//
-// AuditEvent.Payload is a json.RawMessage field already declared in
-// internal/domain/types.go:220 — no domain-type changes needed beyond
-// the two new AuditEventType constants added alongside this handler.
-func HandleCombineWebhook(audit domain.AuditEventStore) http.Handler {
+func HandleCombineWebhook(audit domain.AuditEventStore, projects domain.ProjectStore, dispatcher domain.BotDispatcher) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		event := r.Header.Get("X-SoftServe-Event")
 		switch event {
@@ -71,6 +67,20 @@ func HandleCombineWebhook(audit domain.AuditEventStore) http.Handler {
 				"after":  body.After,
 			})
 			recordCombineEvent(r.Context(), audit, domain.AuditEventCombinePushReceived, payload)
+			if dispatcher != nil && projects != nil {
+				branch := body.Ref
+				if idx := len("refs/heads/"); len(branch) > idx {
+					branch = branch[idx:]
+				}
+				dispatchCombineEvent(r.Context(), projects, dispatcher, body.Repository.Name, "commit_landed",
+					domain.VocabularyContext{
+						Payload: map[string]any{
+							"branch":     branch,
+							"commit_sha": body.After,
+							"author":     "",
+						},
+					})
+			}
 		case "pull_request_merged":
 			var body combineMergePayload
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -85,12 +95,37 @@ func HandleCombineWebhook(audit domain.AuditEventStore) http.Handler {
 				"merged_by":     body.Sender.Username,
 			})
 			recordCombineEvent(r.Context(), audit, domain.AuditEventCombineMergeReceived, payload)
+			if dispatcher != nil && projects != nil {
+				dispatchCombineEvent(r.Context(), projects, dispatcher, body.Repository.Name, "merged",
+					domain.VocabularyContext{
+						Payload: map[string]any{
+							"pr_number":     body.PullRequest.Number,
+							"merged_by":     body.Sender.Username,
+							"target_branch": body.PullRequest.TargetBranch,
+						},
+					})
+			}
 		default:
 			// Other Combine event types are accepted for forward
 			// compatibility but not audited at this layer.
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// dispatchCombineEvent looks up a project by the Combine repo name and
+// fires a vocabulary dispatch if the project exists. If no project matches
+// or the vocabulary doesn't define the event, the call is a no-op (logged
+// at debug). Audit recording is not affected — dispatch is additive.
+func dispatchCombineEvent(ctx context.Context, projects domain.ProjectStore, dispatcher domain.BotDispatcher, repoName, eventType string, vocCtx domain.VocabularyContext) {
+	p, err := projects.GetProjectByName(ctx, repoName)
+	if err != nil {
+		log.Debug("combine: no project for repo", "repo", repoName, "err", err)
+		return
+	}
+	if err := dispatcher.Dispatch(ctx, p.ID, eventType, vocCtx); err != nil {
+		log.Debug("combine: dispatch skipped", "repo", repoName, "event", eventType, "err", err)
+	}
 }
 
 // recordCombineEvent persists the audit row, swallowing failures with

@@ -49,6 +49,17 @@ type ServerConfig struct {
 	// in production until a real driver lands; the e2e harness injects
 	// stub.Driver so the diag endpoint exercises the interface.
 	Runtime domain.RuntimeDriver
+
+	// BotKeysDir is the directory under which per-bot Passport API
+	// key plaintexts are written (mode 0600). Empty disables bot
+	// creation (the POST /v1/projects/{id}/bot handler returns 503).
+	BotKeysDir string
+
+	// Dispatcher is the optional vocabulary-driven message
+	// dispatcher. When nil, scheduler claim/release and the Combine
+	// webhook skip outbound chat posts and continue with audit-only
+	// behaviour.
+	Dispatcher domain.BotDispatcher
 }
 
 // NewServer creates and configures the HTTP server.
@@ -115,6 +126,8 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	registerApprovalRoutes(api, cfg.Store, svc)
 	registerRuntimeDiagRoutes(api, cfg.Runtime)
 	registerSchedulerAndAuditDiagRoutes(api, sch, cfg.Store)
+	registerVocabularyRoutes(api, cfg.Store)
+	registerProjectRoutes(api, cfg.Store, cfg.BotKeysDir)
 
 	// Health — raw handler (conditional status codes 200/218/503)
 	mux.HandleFunc("GET /v1/health", HandleHealth(cfg.Health))
@@ -124,7 +137,7 @@ func NewServer(cfg ServerConfig) (*http.Server, *scheduler.Scheduler) {
 	mux.Handle("POST /v1/webhooks/sharkfin", HandleSharkfinWebhook(nil))
 
 	// Combine webhook receiver.
-	mux.Handle("POST /v1/webhooks/combine", HandleCombineWebhook(cfg.Store))
+	mux.Handle("POST /v1/webhooks/combine", HandleCombineWebhook(cfg.Store, cfg.Store, cfg.Dispatcher))
 
 	// MCP server — raw handler (JSON-RPC 2.0, not REST)
 	mcpHandler := NewMCPHandler(MCPDeps{

@@ -27,6 +27,9 @@ func (c *captureAudit) ListAuditEventsByWorkflow(context.Context, string) ([]*do
 func (c *captureAudit) ListAuditEventsByAgent(context.Context, string) ([]*domain.AuditEvent, error) {
 	return nil, nil
 }
+func (c *captureAudit) ListAuditEventsByProject(context.Context, string) ([]*domain.AuditEvent, error) {
+	return nil, nil
+}
 
 func postCombine(t *testing.T, h http.Handler, event string, payload any) *httptest.ResponseRecorder {
 	t.Helper()
@@ -42,7 +45,7 @@ func postCombine(t *testing.T, h http.Handler, event string, payload any) *httpt
 
 func TestCombineWebhook_PushAuditedAndAcked(t *testing.T) {
 	audit := &captureAudit{}
-	h := daemon.HandleCombineWebhook(audit)
+	h := daemon.HandleCombineWebhook(audit, nil, nil)
 	w := postCombine(t, h, "push", map[string]any{
 		"repository": map[string]any{"name": "flow"},
 		"ref":        "refs/heads/main",
@@ -62,7 +65,7 @@ func TestCombineWebhook_PushAuditedAndAcked(t *testing.T) {
 
 func TestCombineWebhook_MergeAuditedAndAcked(t *testing.T) {
 	audit := &captureAudit{}
-	h := daemon.HandleCombineWebhook(audit)
+	h := daemon.HandleCombineWebhook(audit, nil, nil)
 	w := postCombine(t, h, "pull_request_merged", map[string]any{
 		"repository":   map[string]any{"name": "flow"},
 		"pull_request": map[string]any{"number": 42, "target_branch": "main"},
@@ -80,7 +83,7 @@ func TestCombineWebhook_MergeAuditedAndAcked(t *testing.T) {
 
 func TestCombineWebhook_OtherEventsIgnoredButAcked(t *testing.T) {
 	audit := &captureAudit{}
-	h := daemon.HandleCombineWebhook(audit)
+	h := daemon.HandleCombineWebhook(audit, nil, nil)
 	w := postCombine(t, h, "issue_opened", map[string]any{"number": 1})
 	if w.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", w.Code)
@@ -91,7 +94,7 @@ func TestCombineWebhook_OtherEventsIgnoredButAcked(t *testing.T) {
 }
 
 func TestCombineWebhook_NilAuditNeverPanics(t *testing.T) {
-	h := daemon.HandleCombineWebhook(nil)
+	h := daemon.HandleCombineWebhook(nil, nil, nil)
 	w := postCombine(t, h, "push", map[string]any{})
 	if w.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", w.Code)
