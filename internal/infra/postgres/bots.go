@@ -36,6 +36,26 @@ func (s *Store) CreateBot(ctx context.Context, b *domain.Bot) error {
 	return nil
 }
 
+func (s *Store) GetBotByID(ctx context.Context, id string) (*domain.Bot, error) {
+	var b domain.Bot
+	var roles string
+	var created, updated time.Time
+	err := s.db.QueryRowContext(ctx,
+		`SELECT `+botCols+` FROM bots WHERE id = $1`, id).Scan(
+		&b.ID, &b.ProjectID, &b.PassportAPIKeyHash, &b.PassportAPIKeyID,
+		&roles, &created, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("%w: bot %s", domain.ErrNotFound, id)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get bot by id: %w", err)
+	}
+	_ = json.Unmarshal([]byte(roles), &b.HiveRoleAssignments)
+	b.CreatedAt = created
+	b.UpdatedAt = updated
+	return &b, nil
+}
+
 func (s *Store) GetBotByProject(ctx context.Context, projectID string) (*domain.Bot, error) {
 	var b domain.Bot
 	var roles string

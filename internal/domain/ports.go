@@ -51,6 +51,7 @@ type ProjectStore interface {
 
 type BotStore interface {
 	CreateBot(ctx context.Context, b *Bot) error
+	GetBotByID(ctx context.Context, id string) (*Bot, error)
 	GetBotByProject(ctx context.Context, projectID string) (*Bot, error)
 	DeleteBotByProject(ctx context.Context, projectID string) error
 }

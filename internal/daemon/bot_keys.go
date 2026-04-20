@@ -38,11 +38,11 @@ func removeBotKeyFile(dir, botID string) {
 	}
 }
 
-// sweepOrphanBotKeyFiles removes key files under dir whose bot IDs have no
+// SweepOrphanBotKeyFiles removes key files under dir whose bot IDs have no
 // corresponding row in the store. Orphan files arise when a daemon crashes
 // between the bot row insert and the file write. Best-effort: logs warnings,
 // never blocks startup.
-func sweepOrphanBotKeyFiles(ctx context.Context, dir string, store domain.BotStore) {
+func SweepOrphanBotKeyFiles(ctx context.Context, dir string, store domain.BotStore) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -55,16 +55,12 @@ func sweepOrphanBotKeyFiles(ctx context.Context, dir string, store domain.BotSto
 			continue
 		}
 		botID := e.Name()
-		// Check by trying to find a project for which a bot exists with this ID.
-		// We don't have a GetBot(id) method, so we use a heuristic: attempt to
-		// read the file and check if the bot row exists indirectly. Since we
-		// only need to detect orphans (files without rows), we can probe by
-		// looking at listing — but BotStore has no ListBots. Use a simpler
-		// approach: the filename IS the bot ID; we can detect orphans via the
-		// absence of any project whose bot has that ID. Since we don't have a
-		// direct GetBotByID, we skip the sweep on orphan detection gracefully.
-		// A future GetBotByID method would make this cleaner.
-		_ = botID
-		_ = store
+		if _, err := store.GetBotByID(ctx, botID); err != nil {
+			path := filepath.Join(dir, botID)
+			log.Warn("bot-keys sweep: orphan key file, removing", "path", path)
+			if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+				log.Warn("bot-keys sweep: remove failed", "path", path, "err", removeErr)
+			}
+		}
 	}
 }

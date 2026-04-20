@@ -27,6 +27,7 @@ type daemonCfg struct {
 	dbDSN          string
 	stubRuntime    bool
 	nexusURL       string
+	botKeysDir     string
 }
 
 type DaemonOption func(*daemonCfg)
@@ -43,6 +44,10 @@ func WithStubRuntime() DaemonOption {
 	return func(c *daemonCfg) { c.stubRuntime = true }
 }
 
+func WithBotKeysDir(dir string) DaemonOption {
+	return func(c *daemonCfg) { c.botKeysDir = dir }
+}
+
 // withNexusDaemonURL wires the Flow daemon's --nexus-url flag so the
 // production NexusDriver activates and binds /v1/runtime/_diag/*.
 // Used internally by env.go's WithNexusURL EnvOption.
@@ -55,6 +60,7 @@ type Daemon struct {
 	cmd        *exec.Cmd
 	addr       string
 	xdgDir     string
+	botKeysDir string
 	stderrFile *os.File // temp file backing stdout+stderr; read at Stop time
 	signJWT    func(id, username, displayName, userType string) string
 	stops      []func()
@@ -107,6 +113,11 @@ func StartDaemon(
 	if cfg.nexusURL != "" {
 		args = append(args, "--nexus-url", cfg.nexusURL)
 	}
+	botKeysDir := cfg.botKeysDir
+	if botKeysDir == "" {
+		botKeysDir = xdgDir + "/state/bot-keys"
+	}
+	args = append(args, "--bot-keys-dir", botKeysDir)
 
 	dsn := cfg.dbDSN
 	if dsn == "" {
@@ -159,6 +170,7 @@ func StartDaemon(
 
 	d := &Daemon{
 		cmd: cmd, addr: addr, xdgDir: xdgDir,
+		botKeysDir: botKeysDir,
 		stderrFile: stderrFile, signJWT: signJWT,
 	}
 
@@ -169,8 +181,9 @@ func StartDaemon(
 	return d, nil
 }
 
-func (d *Daemon) Addr() string    { return d.addr }
-func (d *Daemon) BaseURL() string { return "http://" + d.addr }
+func (d *Daemon) Addr() string       { return d.addr }
+func (d *Daemon) BaseURL() string    { return "http://" + d.addr }
+func (d *Daemon) BotKeysDir() string { return d.botKeysDir }
 
 // SignJWT mints a 1-hour token signed by the JWKS stub's key.
 func (d *Daemon) SignJWT(id, username, displayName, userType string) string {

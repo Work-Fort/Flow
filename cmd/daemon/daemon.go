@@ -33,6 +33,7 @@ func NewCmd() *cobra.Command {
 	var pylonURL string
 	var webhookBaseURL string
 	var nexusURL string
+	var botKeysDir string
 
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -62,11 +63,14 @@ func NewCmd() *cobra.Command {
 			if !cmd.Flags().Changed("nexus-url") {
 				nexusURL = viper.GetString("nexus-url")
 			}
+			if !cmd.Flags().Changed("bot-keys-dir") {
+				botKeysDir = viper.GetString("bot.keys-dir")
+			}
 
 			hiveSvcName := viper.GetString("pylon.services.hive")
 			sharkfinSvcName := viper.GetString("pylon.services.sharkfin")
 
-			return run(bind, port, db, passportURL, serviceToken, pylonURL, webhookBaseURL, nexusURL, hiveSvcName, sharkfinSvcName)
+			return run(bind, port, db, passportURL, serviceToken, pylonURL, webhookBaseURL, nexusURL, hiveSvcName, sharkfinSvcName, botKeysDir)
 		},
 	}
 
@@ -78,11 +82,12 @@ func NewCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pylonURL, "pylon-url", "", "Pylon service registry URL")
 	cmd.Flags().StringVar(&webhookBaseURL, "webhook-base-url", "", "Flow's externally reachable base URL for webhook callbacks")
 	cmd.Flags().StringVar(&nexusURL, "nexus-url", "", "Nexus daemon REST URL (enables RuntimeDriver in production builds)")
+	cmd.Flags().StringVar(&botKeysDir, "bot-keys-dir", "", "Directory for per-bot Passport key files (default: <state-dir>/bot-keys)")
 
 	return cmd
 }
 
-func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhookBaseURL, nexusURL, hiveSvcName, sharkfinSvcName string) error {
+func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhookBaseURL, nexusURL, hiveSvcName, sharkfinSvcName, botKeysDir string) error {
 	health := flowDaemon.NewHealthService()
 
 	dsn := db
@@ -99,6 +104,11 @@ func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhook
 	if err := admin.SeedVocabularies(context.Background(), store); err != nil {
 		return fmt.Errorf("seed vocabularies: %w", err)
 	}
+
+	if botKeysDir == "" {
+		botKeysDir = filepath.Join(config.GlobalPaths.StateDir, "bot-keys")
+	}
+	flowDaemon.SweepOrphanBotKeyFiles(context.Background(), botKeysDir, store)
 
 	health.RegisterPeriodicCheck("db", func(ctx context.Context) flowDaemon.CheckResult {
 		if err := store.Ping(ctx); err != nil {
@@ -120,6 +130,7 @@ func run(bind string, port int, db, passportURL, serviceToken, pylonURL, webhook
 		WebhookBaseURL: webhookBaseURL,
 		Health:         health,
 		Store:          store,
+		BotKeysDir:     botKeysDir,
 	}
 	injectStubRuntime(&serverCfg)
 	// Nexus driver is the production default; injectNexusRuntime is a
